@@ -1,0 +1,64 @@
+{
+  "ok": false,
+  "checks": [
+    {
+      "name": "manifest",
+      "ok": true,
+      "detail": "plugin.yaml parses"
+    },
+    {
+      "name": "manifest fields",
+      "ok": true,
+      "detail": "name, version, description present"
+    },
+    {
+      "name": "requires_hermes",
+      "ok": true,
+      "detail": "not declared"
+    },
+    {
+      "name": "config schema",
+      "ok": true,
+      "detail": "not declared"
+    },
+    {
+      "name": "requires_env",
+      "ok": true,
+      "detail": "all entries UPPER_SNAKE"
+    },
+    {
+      "name": "loadable",
+      "ok": true,
+      "detail": "entry: desktop/plugin.js"
+    },
+    {
+      "name": "python dependencies",
+      "ok": true,
+      "detail": "none declared"
+    },
+    {
+      "name": "capability probe",
+      "ok": true,
+      "detail": "skipped (no __init__.py)"
+    },
+    {
+      "name": "built-in tool collisions",
+      "ok": true,
+      "detail": "no tools to check"
+    },
+    {
+      "name": "security scan",
+      "ok": true,
+      "detail": "caution"
+    },
+    {
+      "name": "desktop surface",
+      "ok": false,
+      "detail": "prototype patching (desktop/plugin.js:2650); prototype patching (desktop/plugin.js:2650); prototype patching (desktop/plugin.js:2651); prototype patching (desktop/plugin.js:2652); prototype patching (desktop/plugin.js:3947); prototype patching (desktop/plugin.js:3961); prototype patching (desktop/plugin.js:3962); prototype patching (desktop/plugin.js:3988) (+82 more)"
+    }
+  ],
+  "warnings": [
+    "no __init__.py \u2014 capability probe skipped (manifest-only plugin)",
+    "security scan caution: dump_all_env (plugin.js:27858), dump_all_env (plugin.js:27868), invisible_unicode (plugin.js:19006)"
+  ]
+}

@@ -1,0 +1,2 @@
+# Preserve generated/vendor text verbatim; review src/ alongside this bundle.
+desktop/* linguist-generated=true -whitespace

@@ -1,0 +1,12 @@
+name: composer-lab
+version: 0.3.0
+description: "Experimental caret styling and Markdown list enhancements for Hermes Desktop. Uses unsupported composer DOM adapters; not an official catalog plugin."
+author: waiclay-349687
+license: MIT
+homepage: https://github.com/waiclay-349687/hermes-composer-lab
+tags: [desktop, composer, caret, markdown, experimental]
+provides_tools: []
+provides_hooks: []
+capabilities: []
+requires_env: []
+python_dependencies: []
