@@ -23,6 +23,7 @@ import {
   themeHex,
 } from "./settings.js";
 export const CSS = `
+.cl-toolbar-button { width:var(--composer-control-size,24px);height:var(--composer-control-size,24px);padding:0;color:var(--ui-text-tertiary,var(--ui-text-secondary)); }
 [data-cl-cursor-style] { caret-color:var(--cl-caret-color,var(--ui-accent)); }
 @keyframes cl-native-fade { 0%,100% {caret-color:var(--cl-caret-color,var(--ui-accent));} 50% {caret-color:transparent;} }
 @supports (caret-animation:manual) {
@@ -80,7 +81,7 @@ export default {
       for (const fn of subscribers) fn();
     };
     const style = document.createElement("style");
-    style.dataset.composerLab = "0.3.0";
+    style.dataset.composerLab = "0.3.1";
     style.textContent = CSS;
     document.head.append(style);
     const caret = mountCaret(() => settings);
@@ -177,7 +178,8 @@ export default {
           jsx(Button, {
             type: "button",
             variant: "ghost",
-            size: "sm",
+            size: "icon-xs",
+            className: "cl-toolbar-button rounded-md",
             title: "输入实验室：光标与列表设置",
             "aria-label": "打开输入实验室",
             "data-cl-settings-owner": owner,
@@ -207,7 +209,7 @@ export default {
                   children: [
                     jsx(DialogTitle, { children: "输入实验室" }),
                     jsx(DialogDescription, {
-                      children: "光标与列表 · 0.3.0 实验版",
+                      children: "光标与列表 · 0.3.1 实验版",
                     }),
                   ],
                 }),
@@ -457,7 +459,7 @@ export default {
         run: open,
       },
     });
-    console.info("[composer-lab] 0.3.0 registered");
+    console.info("[composer-lab] 0.3.1 registered");
     ctx.onDispose(() => {
       lists.dispose();
       caret.dispose();

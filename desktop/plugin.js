@@ -29647,6 +29647,7 @@ function mountCaret(settings) {
 
 // src/plugin.js
 var CSS2 = `
+.cl-toolbar-button { width:var(--composer-control-size,24px);height:var(--composer-control-size,24px);padding:0;color:var(--ui-text-tertiary,var(--ui-text-secondary)); }
 [data-cl-cursor-style] { caret-color:var(--cl-caret-color,var(--ui-accent)); }
 @keyframes cl-native-fade { 0%,100% {caret-color:var(--cl-caret-color,var(--ui-accent));} 50% {caret-color:transparent;} }
 @supports (caret-animation:manual) {
@@ -29702,7 +29703,7 @@ var plugin_default = {
       for (const fn of subscribers) fn();
     };
     const style = document.createElement("style");
-    style.dataset.composerLab = "0.3.0";
+    style.dataset.composerLab = "0.3.1";
     style.textContent = CSS2;
     document.head.append(style);
     const caret = mountCaret(() => settings);
@@ -29789,7 +29790,8 @@ var plugin_default = {
           jsx(Button, {
             type: "button",
             variant: "ghost",
-            size: "sm",
+            size: "icon-xs",
+            className: "cl-toolbar-button rounded-md",
             title: "\u8F93\u5165\u5B9E\u9A8C\u5BA4\uFF1A\u5149\u6807\u4E0E\u5217\u8868\u8BBE\u7F6E",
             "aria-label": "\u6253\u5F00\u8F93\u5165\u5B9E\u9A8C\u5BA4",
             "data-cl-settings-owner": owner,
@@ -29814,7 +29816,7 @@ var plugin_default = {
                   children: [
                     jsx(DialogTitle, { children: "\u8F93\u5165\u5B9E\u9A8C\u5BA4" }),
                     jsx(DialogDescription, {
-                      children: "\u5149\u6807\u4E0E\u5217\u8868 \xB7 0.3.0 \u5B9E\u9A8C\u7248"
+                      children: "\u5149\u6807\u4E0E\u5217\u8868 \xB7 0.3.1 \u5B9E\u9A8C\u7248"
                     })
                   ]
                 }),
@@ -30050,7 +30052,7 @@ var plugin_default = {
         run: open
       }
     });
-    console.info("[composer-lab] 0.3.0 registered");
+    console.info("[composer-lab] 0.3.1 registered");
     ctx.onDispose(() => {
       lists.dispose();
       caret.dispose();

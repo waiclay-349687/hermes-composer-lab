@@ -41,7 +41,38 @@ fs.mkdirSync(scratch, { recursive: true });
       "actual plugin settings button opens without submitting host form",
       async () => {
         await open("settings");
-        await p.getByRole("button", { name: "打开输入实验室" }).click();
+        const opener = p.getByRole("button", { name: "打开输入实验室" });
+        for (const size of [24, 28]) {
+          await p.evaluate(
+            (size) =>
+              document.body.style.setProperty(
+                "--composer-control-size",
+                `${size}px`,
+              ),
+            size,
+          );
+          await p.waitForFunction(
+            (size) =>
+              getComputedStyle(document.querySelector(".cl-toolbar-button"))
+                .width === `${size}px`,
+            size,
+          );
+          const dimensions = await opener.evaluate((el) => {
+            const s = getComputedStyle(el);
+            return [s.width, s.height, s.paddingLeft, s.paddingRight, el.type];
+          });
+          assert.deepEqual(dimensions, [
+            `${size}px`,
+            `${size}px`,
+            "0px",
+            "0px",
+            "button",
+          ]);
+        }
+        await p.evaluate(() =>
+          document.body.style.removeProperty("--composer-control-size"),
+        );
+        await opener.click();
         await p.getByRole("dialog").waitFor();
         assert.equal(await p.evaluate(() => submits), 0);
         assert.deepEqual(
