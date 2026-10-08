@@ -5,7 +5,7 @@ import {
   insertNewlineContinueMarkupCommand,
 } from "@codemirror/lang-markdown";
 import { syntaxTree, ensureSyntaxTree, indentUnit } from "@codemirror/language";
-import { markerInfo, structuralEdit } from "./list-structure.js";
+import { markerInfo, orderedLists, renumberDoc, structuralEdit } from "./list-structure.js";
 const continueMarkup = insertNewlineContinueMarkupCommand({
   nonTightLists: false,
 });
@@ -86,4 +86,21 @@ export function markdownEdit(text, offset, key, shift = false) {
     changes.push({ start: from, end: to, insert: insert.toString() }),
   );
   return { changes, caret: transaction.newSelection.main.head };
+}
+
+// Ordered-list numbering fix for the whole draft, or null when nothing changes.
+const HAS_ORDERED = /^[ \t]*\d{1,9}[.)][ \t]/m;
+export function renumberEdit(text, caret, starts = null) {
+  if (text.length > 24000 || !HAS_ORDERED.test(text)) return null;
+  const state = stateFor(text);
+  return renumberDoc(text, state.doc, syntaxTree(state), caret, starts);
+}
+// First number of every ordered list, in document order.
+export function orderedStarts(text) {
+  if (text.length > 24000 || !HAS_ORDERED.test(text)) return [];
+  const state = stateFor(text);
+  return orderedLists(syntaxTree(state)).map((list) => {
+    const first = list.getChild("ListItem")?.getChild("ListMark");
+    return first ? parseInt(state.doc.sliceString(first.from, first.to), 10) : 1;
+  });
 }

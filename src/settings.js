@@ -4,6 +4,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   colorMode: "theme",
   customColor: "",
   lists: true,
+  renumber: true,
 });
 export const isHexColor = (value) =>
   typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value);
@@ -18,6 +19,7 @@ export function normalizeSettings(raw) {
         : "theme",
     customColor: isHexColor(v.customColor) ? v.customColor.toLowerCase() : "",
     lists: typeof v.lists === "boolean" ? v.lists : true,
+    renumber: typeof v.renumber === "boolean" ? v.renumber : true,
   };
 }
 export function themeHex() {

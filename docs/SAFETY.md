@@ -2,7 +2,9 @@
 
 ## 0.4.0: real-composer fixes
 
-Testing inside the real Hermes desktop app (isolated sandbox, mock model, CDP) showed that 0.3.x's line/marker wrapper spans broke caret placement, Backspace and arrow keys, and that whole-list re-serialization rewrote `-` to `*`, `1)` to `1.` and escaped task boxes. 0.4.0 never restructures the host DOM (markers use CSS highlights), edits only leading indentation/markers, pauses (not permanently disables) lists after an error, self-heals a lost `compositionend`, restores focus after the settings dialog, and opens settings from ⌘K on pages without a composer. `npm test` runs 28 checks; the Electron suites run 29. Tab is offered to the host first and only indents when the host leaves it unhandled.
+Testing inside the real Hermes desktop app (isolated sandbox, mock model, CDP) showed that 0.3.x's line/marker wrapper spans broke caret placement, Backspace and arrow keys, and that whole-list re-serialization rewrote `-` to `*`, `1)` to `1.` and escaped task boxes. 0.4.0 never restructures the host DOM (markers use CSS highlights), edits only leading indentation/markers, pauses (not permanently disables) lists after an error, self-heals a lost `compositionend`, restores focus after the settings dialog, and opens settings from ⌘K on pages without a composer. `npm test` runs 34 checks; the Electron suites run 29. Tab is offered to the host first and only indents when the host leaves it unhandled.
+
+Auto renumbering only runs after a deletion / cut / paste / drop that changed the line count, with a collapsed caret in the focused editor, and never while the caret is inside an ordered number. Managed editors get `white-space: pre-wrap` so a list marker's trailing space survives in the edit-message composer.
 
 ## Confirmed defect fixed in 0.3.0
 

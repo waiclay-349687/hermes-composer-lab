@@ -2,7 +2,7 @@
 // Marker styling never touches the host DOM (CSS Custom Highlight API). Only an
 // explicit list key (⇧Enter / Tab / ⇧Tab / ⌫ / ⌘⌫ on a list row) edits the host
 // text, in the host's own shape (text nodes + <br>). Not a supported SDK seam.
-import { listRows, markdownEdit, rowAt } from "./markdown.js";
+import { listRows, markdownEdit, orderedStarts, renumberEdit, rowAt } from "./markdown.js";
 import { SELECTOR } from "./surface.js";
 export { SELECTOR };
 export const LIST = /^( *)(\d{1,6}[.)]|[-+*])([ \t]+)(.*)$/;
@@ -289,7 +289,7 @@ function sameVisualLine(editor, at) {
   return !!(here && there && Math.abs(here.top - there.top) < Math.min(here.height, there.height) / 2);
 }
 const lateTab = new WeakMap();
-export function mountLists({ enabled, onError }) {
+export function mountLists({ enabled, renumber = () => true, onError }) {
   const states = new Map();
   const late = (e) => {
     const handler = lateTab.get(e);
@@ -315,10 +315,47 @@ export function mountLists({ enabled, onError }) {
     if (states.has(editor)) return;
     editor.dataset.clManaged = "";
     undecorate(editor);
-    const st = { ranges: [], frame: 0, composing: false };
+    const st = { ranges: [], frame: 0, composing: false, pendingFix: false, lines: -1, starts: null };
     const observer = new MutationObserver(() => schedule());
+    // After a deletion / cut / paste / drop that added or removed whole lines,
+    // make ordered lists sequential again (one undo step, ⌘Z reverts it).
+    function autoRenumber() {
+      const pending = st.pendingFix;
+      st.pendingFix = false;
+      const text = textOf(editor),
+        lines = text.split("\n").length,
+        changedLines = lines !== st.lines,
+        starts = st.starts;
+      st.lines = lines;
+      st.starts = orderedStarts(text);
+      if (!pending || !changedLines || !renumber() || hasBlocks(editor)) return;
+      const sel = getSelection();
+      if (document.activeElement !== editor || !sel?.isCollapsed) return;
+      const before = caretOffset(editor);
+      if (before == null) return;
+      const edit = renumberEdit(text, Math.min(before.length, text.length), starts);
+      if (edit) {
+        applyEdit(editor, edit);
+        st.starts = orderedStarts(textOf(editor));
+      }
+    }
+    const markFix = (e) => {
+      if (
+        e.type !== "keydown" ||
+        e.key === "Backspace" ||
+        e.key === "Delete" ||
+        ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "x")
+      )
+        st.pendingFix = true;
+    };
     function measure() {
       st.frame = 0;
+      if (enabled() && editor.isConnected && !st.composing)
+        try {
+          autoRenumber();
+        } catch (e) {
+          console.warn("[composer-lab] renumber skipped:", e);
+        }
       try {
         st.ranges =
           enabled() && canHighlight && editor.isConnected
@@ -411,6 +448,8 @@ export function mountLists({ enabled, onError }) {
       schedule();
     };
     editor.addEventListener("keydown", key, true);
+    for (const t of ["keydown", "cut", "paste", "drop"])
+      editor.addEventListener(t, markFix, true);
     editor.addEventListener("compositionstart", begin);
     editor.addEventListener("compositionend", end);
     editor.addEventListener("blur", end);
@@ -430,6 +469,8 @@ export function mountLists({ enabled, onError }) {
         observer.disconnect();
         cancelAnimationFrame(st.frame);
         editor.removeEventListener("keydown", key, true);
+        for (const t of ["keydown", "cut", "paste", "drop"])
+          editor.removeEventListener(t, markFix, true);
         editor.removeEventListener("compositionstart", begin);
         editor.removeEventListener("compositionend", end);
         editor.removeEventListener("blur", end);

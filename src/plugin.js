@@ -36,6 +36,7 @@ export const CSS = `
 .cl-caret {position:fixed;top:0;left:0;width:2px;border-radius:1px;pointer-events:none;will-change:transform;}
 ::highlight(cl-list-mark) {color:var(--ui-accent);}
 ::highlight(cl-list-task) {color:var(--ui-text-secondary);}
+[data-cl-managed] {white-space:pre-wrap;}
 [data-cl-managed] :where(span,font):not([data-ref-text],[data-ref-text] *) {color:inherit!important;-webkit-text-fill-color:currentColor!important;}
 @media (prefers-reduced-motion:reduce) {
  [data-cl-soft]:focus {animation:none;caret-animation:auto;}
@@ -85,13 +86,16 @@ export default {
     // A runtime failure pauses lists for this app session only. It is never
     // written to storage: one glitch must not silently switch the feature off
     // for good. Toggling the switch (or a restart) resumes it.
-    let listsPaused = false;
+    let listsPaused = false,
+      pauseReason = "";
     const lists = mountLists({
       enabled: () => settings.lists && !listsPaused,
+      renumber: () => settings.renumber,
       onError: (e) => {
         console.error("[composer-lab] list enhancement paused:", e);
         if (listsPaused) return;
         listsPaused = true;
+        pauseReason = String(e?.message || e).slice(0, 80);
         lists?.refresh();
         signal();
         host.notify({
@@ -396,7 +400,14 @@ export default {
                     toggle(
                       "lists",
                       "列表增强",
-                      "保留 Markdown 原文；自动续号、缩进与空项退出。",
+                      listsPaused
+                        ? `本次已暂停：遇到错误（${pauseReason}）。重新打开开关即可恢复。`
+                        : "保留 Markdown 原文；自动续号、缩进与空项退出。",
+                    ),
+                    toggle(
+                      "renumber",
+                      "自动校正编号",
+                      "删除、剪切或粘贴整行后，把有序列表重新排成连续编号；⌘Z 可撤回。",
                     ),
                     jsxs("div", {
                       className: "cl-shortcuts",

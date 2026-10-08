@@ -17351,6 +17351,30 @@ function structuralEdit(text, doc2, row, offset, key, shift2) {
   if (key === "Backspace") return lift(text, doc2, row, offset);
   return null;
 }
+function orderedLists(tree) {
+  const lists = [];
+  tree.iterate({
+    enter: (n) => {
+      if (n.name === "OrderedList") lists.push(n.node);
+    }
+  });
+  return lists;
+}
+function renumberDoc(text, doc2, tree, caret, starts = null) {
+  const lists = orderedLists(tree);
+  if (starts && starts.length !== lists.length) starts = null;
+  const changes = [];
+  for (const [k, list] of lists.entries()) {
+    const items = listItems(list), infos = items.map((i2) => markerInfo(i2, doc2));
+    if (infos.some((i2) => !i2 || i2.number === null)) continue;
+    if (caret != null && infos.some((i2) => caret > i2.markFrom && caret <= i2.markTo))
+      return null;
+    if (infos.every((i2) => i2.number === infos[0].number) && infos.length > 1) continue;
+    renumber(text, items, doc2, starts?.[k] ?? infos[0].number, changes);
+  }
+  if (!changes.length) return null;
+  return finish(changes, caret ?? 0);
+}
 
 // src/markdown.js
 var continueMarkup = insertNewlineContinueMarkupCommand({
@@ -17419,6 +17443,20 @@ function markdownEdit(text, offset, key, shift2 = false) {
     (from, to, _a2, _b, insert2) => changes.push({ start: from, end: to, insert: insert2.toString() })
   );
   return { changes, caret: transaction.newSelection.main.head };
+}
+var HAS_ORDERED = /^[ \t]*\d{1,9}[.)][ \t]/m;
+function renumberEdit(text, caret, starts = null) {
+  if (text.length > 24e3 || !HAS_ORDERED.test(text)) return null;
+  const state = stateFor(text);
+  return renumberDoc(text, state.doc, syntaxTree(state), caret, starts);
+}
+function orderedStarts(text) {
+  if (text.length > 24e3 || !HAS_ORDERED.test(text)) return [];
+  const state = stateFor(text);
+  return orderedLists(syntaxTree(state)).map((list) => {
+    const first = list.getChild("ListItem")?.getChild("ListMark");
+    return first ? parseInt(state.doc.sliceString(first.from, first.to), 10) : 1;
+  });
 }
 
 // src/surface.js
@@ -17658,7 +17696,7 @@ function sameVisualLine(editor, at) {
   return !!(here && there && Math.abs(here.top - there.top) < Math.min(here.height, there.height) / 2);
 }
 var lateTab = /* @__PURE__ */ new WeakMap();
-function mountLists({ enabled, onError }) {
+function mountLists({ enabled, renumber: renumber2 = () => true, onError }) {
   const states = /* @__PURE__ */ new Map();
   const late = (e) => {
     const handler = lateTab.get(e);
@@ -17683,10 +17721,37 @@ function mountLists({ enabled, onError }) {
     if (states.has(editor)) return;
     editor.dataset.clManaged = "";
     undecorate(editor);
-    const st = { ranges: [], frame: 0, composing: false };
+    const st = { ranges: [], frame: 0, composing: false, pendingFix: false, lines: -1, starts: null };
     const observer = new MutationObserver(() => schedule());
+    function autoRenumber() {
+      const pending = st.pendingFix;
+      st.pendingFix = false;
+      const text = textOf(editor), lines = text.split("\n").length, changedLines = lines !== st.lines, starts = st.starts;
+      st.lines = lines;
+      st.starts = orderedStarts(text);
+      if (!pending || !changedLines || !renumber2() || hasBlocks(editor)) return;
+      const sel = getSelection();
+      if (document.activeElement !== editor || !sel?.isCollapsed) return;
+      const before = caretOffset(editor);
+      if (before == null) return;
+      const edit = renumberEdit(text, Math.min(before.length, text.length), starts);
+      if (edit) {
+        applyEdit(editor, edit);
+        st.starts = orderedStarts(textOf(editor));
+      }
+    }
+    const markFix = (e) => {
+      if (e.type !== "keydown" || e.key === "Backspace" || e.key === "Delete" || (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "x")
+        st.pendingFix = true;
+    };
     function measure() {
       st.frame = 0;
+      if (enabled() && editor.isConnected && !st.composing)
+        try {
+          autoRenumber();
+        } catch (e) {
+          console.warn("[composer-lab] renumber skipped:", e);
+        }
       try {
         st.ranges = enabled() && canHighlight && editor.isConnected ? markerRanges(editor) : [];
       } catch (e) {
@@ -17754,6 +17819,8 @@ function mountLists({ enabled, onError }) {
       schedule();
     };
     editor.addEventListener("keydown", key, true);
+    for (const t2 of ["keydown", "cut", "paste", "drop"])
+      editor.addEventListener(t2, markFix, true);
     editor.addEventListener("compositionstart", begin);
     editor.addEventListener("compositionend", end);
     editor.addEventListener("blur", end);
@@ -17773,6 +17840,8 @@ function mountLists({ enabled, onError }) {
         observer.disconnect();
         cancelAnimationFrame(st.frame);
         editor.removeEventListener("keydown", key, true);
+        for (const t2 of ["keydown", "cut", "paste", "drop"])
+          editor.removeEventListener(t2, markFix, true);
         editor.removeEventListener("compositionstart", begin);
         editor.removeEventListener("compositionend", end);
         editor.removeEventListener("blur", end);
@@ -17827,7 +17896,8 @@ var DEFAULT_SETTINGS = Object.freeze({
   fade: true,
   colorMode: "theme",
   customColor: "",
-  lists: true
+  lists: true,
+  renumber: true
 });
 var isHexColor = (value) => typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value);
 function normalizeSettings(raw) {
@@ -17837,7 +17907,8 @@ function normalizeSettings(raw) {
     fade: typeof v.fade === "boolean" ? v.fade : true,
     colorMode: v.colorMode === "custom" && isHexColor(v.customColor) ? "custom" : "theme",
     customColor: isHexColor(v.customColor) ? v.customColor.toLowerCase() : "",
-    lists: typeof v.lists === "boolean" ? v.lists : true
+    lists: typeof v.lists === "boolean" ? v.lists : true,
+    renumber: typeof v.renumber === "boolean" ? v.renumber : true
   };
 }
 function themeHex() {
@@ -18078,6 +18149,7 @@ var CSS2 = `
 .cl-caret {position:fixed;top:0;left:0;width:2px;border-radius:1px;pointer-events:none;will-change:transform;}
 ::highlight(cl-list-mark) {color:var(--ui-accent);}
 ::highlight(cl-list-task) {color:var(--ui-text-secondary);}
+[data-cl-managed] {white-space:pre-wrap;}
 [data-cl-managed] :where(span,font):not([data-ref-text],[data-ref-text] *) {color:inherit!important;-webkit-text-fill-color:currentColor!important;}
 @media (prefers-reduced-motion:reduce) {
  [data-cl-soft]:focus {animation:none;caret-animation:auto;}
@@ -18122,13 +18194,15 @@ var plugin_default = {
     style.textContent = CSS2;
     document.head.append(style);
     const caret = mountCaret(() => settings);
-    let listsPaused = false;
+    let listsPaused = false, pauseReason = "";
     const lists = mountLists({
       enabled: () => settings.lists && !listsPaused,
+      renumber: () => settings.renumber,
       onError: (e) => {
         console.error("[composer-lab] list enhancement paused:", e);
         if (listsPaused) return;
         listsPaused = true;
+        pauseReason = String(e?.message || e).slice(0, 80);
         lists?.refresh();
         signal();
         host.notify({
@@ -18397,7 +18471,12 @@ var plugin_default = {
                     toggle(
                       "lists",
                       "\u5217\u8868\u589E\u5F3A",
-                      "\u4FDD\u7559 Markdown \u539F\u6587\uFF1B\u81EA\u52A8\u7EED\u53F7\u3001\u7F29\u8FDB\u4E0E\u7A7A\u9879\u9000\u51FA\u3002"
+                      listsPaused ? `\u672C\u6B21\u5DF2\u6682\u505C\uFF1A\u9047\u5230\u9519\u8BEF\uFF08${pauseReason}\uFF09\u3002\u91CD\u65B0\u6253\u5F00\u5F00\u5173\u5373\u53EF\u6062\u590D\u3002` : "\u4FDD\u7559 Markdown \u539F\u6587\uFF1B\u81EA\u52A8\u7EED\u53F7\u3001\u7F29\u8FDB\u4E0E\u7A7A\u9879\u9000\u51FA\u3002"
+                    ),
+                    toggle(
+                      "renumber",
+                      "\u81EA\u52A8\u6821\u6B63\u7F16\u53F7",
+                      "\u5220\u9664\u3001\u526A\u5207\u6216\u7C98\u8D34\u6574\u884C\u540E\uFF0C\u628A\u6709\u5E8F\u5217\u8868\u91CD\u65B0\u6392\u6210\u8FDE\u7EED\u7F16\u53F7\uFF1B\u2318Z \u53EF\u64A4\u56DE\u3002"
                     ),
                     jsxs("div", {
                       className: "cl-shortcuts",

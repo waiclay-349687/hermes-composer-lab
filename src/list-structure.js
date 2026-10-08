@@ -244,3 +244,38 @@ export function structuralEdit(text, doc, row, offset, key, shift) {
   if (key === "Backspace") return lift(text, doc, row, offset);
   return null;
 }
+
+// Make every ordered list in the draft sequential again after a line was
+// removed / pasted / dropped (rules follow Markdown All in One's autoRenumber:
+// keep each list's first number, count up per sibling). Lists written in the
+// all-same-number style ("1. 1. 1.") are left alone, and so is anything while
+// the caret sits inside an ordered marker (the user is editing that number).
+export function orderedLists(tree) {
+  const lists = [];
+  tree.iterate({
+    enter: (n) => {
+      if (n.name === "OrderedList") lists.push(n.node);
+    },
+  });
+  return lists;
+}
+// `starts`: each ordered list's first number BEFORE the edit (same order), so
+// cutting the first item of a "1." list renumbers from 1 again, while a list
+// the user started at 5 keeps starting at 5.
+export function renumberDoc(text, doc, tree, caret, starts = null) {
+  const lists = orderedLists(tree);
+  if (starts && starts.length !== lists.length) starts = null;
+  const changes = [];
+  for (const [k, list] of lists.entries()) {
+    const items = listItems(list),
+      infos = items.map((i) => markerInfo(i, doc));
+    if (infos.some((i) => !i || i.number === null)) continue;
+    // Caret inside a number: the user is editing it, do not fight.
+    if (caret != null && infos.some((i) => caret > i.markFrom && caret <= i.markTo))
+      return null;
+    if (infos.every((i) => i.number === infos[0].number) && infos.length > 1) continue;
+    renumber(text, items, doc, starts?.[k] ?? infos[0].number, changes);
+  }
+  if (!changes.length) return null;
+  return finish(changes, caret ?? 0);
+}

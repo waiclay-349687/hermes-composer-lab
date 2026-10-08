@@ -6,7 +6,7 @@ import {
   normalizeSettings,
   isHexColor,
 } from "../src/settings.js";
-import { markdownEdit } from "../src/markdown.js";
+import { markdownEdit, renumberEdit } from "../src/markdown.js";
 const apply = (text, e) => {
   for (const c of [...e.changes].reverse())
     text = text.slice(0, c.start) + c.insert + text.slice(c.end);
@@ -161,4 +161,31 @@ test("removing the first marker keeps the next items a list", () => {
   assert.equal(at("3. |a\n4. b", "Backspace"), "|a\n1. b");
   assert.equal(at("1. |a\n   1. x\n2. b", "Backspace"), "|a\n1. x\n2. b");
   assert.equal(at("- |a\n  - x\n- b", "Backspace"), "|a\n- x\n- b");
+});
+
+const fix = (text, caret = null, starts = null) => {
+  const e = renumberEdit(text, caret, starts);
+  return e ? apply(text, e) : null;
+};
+test("auto renumber closes gaps and keeps the list's first number", () => {
+  assert.equal(fix("1. a\n2. b\n4. d"), "1. a\n2. b\n3. d");
+  assert.equal(fix("3) a\n5) b"), "3) a\n4) b");
+  assert.equal(fix("1. a\n   1. x\n   3. y\n3. b"), "1. a\n   1. x\n   2. y\n2. b");
+});
+test("auto renumber keeps children attached across width changes", () =>
+  assert.equal(fix("9. a\n11. b\n    - kid"), "9. a\n10. b\n    - kid"));
+test("auto renumber leaves 1-1-1 style, sequential lists and prose alone", () => {
+  assert.equal(fix("1. a\n1. b\n1. c"), null);
+  assert.equal(fix("1. a\n2. b"), null);
+  assert.equal(fix("no list 3. here"), null);
+});
+test("auto renumber never fights a number being edited", () =>
+  assert.equal(fix("1. a\n1. b\n5. c", 11), null));
+
+test("auto renumber runs with the caret at the start of the next item", () =>
+  assert.equal(fix("1. a\n3. c\n4. d", 5), "1. a\n2. c\n3. d"));
+test("auto renumber restores the list's previous start after cutting item 1", () => {
+  assert.equal(fix("2. b\n3. c", 0, [1]), "1. b\n2. c");
+  assert.equal(fix("6. b\n8. c", 0, [5]), "5. b\n6. c");
+  assert.equal(fix("6. b\n8. c", 0, [1, 1]), "6. b\n7. c");
 });
