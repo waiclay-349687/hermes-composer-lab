@@ -12406,15 +12406,15 @@ var TreeBuffer = class _TreeBuffer {
   @internal
   */
   findChild(startIndex, endIndex, dir, pos, side) {
-    let { buffer } = this, pick = -1;
+    let { buffer } = this, pick2 = -1;
     for (let i2 = startIndex; i2 != endIndex; i2 = buffer[i2 + 3]) {
       if (checkSide(side, pos, buffer[i2 + 1], buffer[i2 + 2])) {
-        pick = i2;
+        pick2 = i2;
         if (dir > 0)
           break;
       }
     }
-    return pick;
+    return pick2;
   }
   /**
   @internal
@@ -12809,20 +12809,20 @@ var BufferNode = class _BufferNode extends BaseNode {
 function iterStack(heads) {
   if (!heads.length)
     return null;
-  let pick = 0, picked = heads[0];
+  let pick2 = 0, picked = heads[0];
   for (let i2 = 1; i2 < heads.length; i2++) {
     let node = heads[i2];
     if (node.from > picked.from || node.to < picked.to) {
       picked = node;
-      pick = i2;
+      pick2 = i2;
     }
   }
   let next = picked instanceof TreeNode && picked.index < 0 ? null : picked.parent;
   let newHeads = heads.slice();
   if (next)
-    newHeads[pick] = next;
+    newHeads[pick2] = next;
   else
-    newHeads.splice(pick, 1);
+    newHeads.splice(pick2, 1);
   return new StackIterator(newHeads, picked);
 }
 var StackIterator = class {
@@ -17893,26 +17893,69 @@ function mountLists({ enabled, renumber: renumber2 = () => true, onError }) {
 }
 
 // src/settings.js
+var CARET_AXES = Object.freeze({
+  shape: ["bar", "block", "underline"],
+  motion: ["glide", "spring", "instant"],
+  rest: ["fade", "breathe", "blink", "steady"],
+  trail: ["none", "ink"],
+  typing: ["none", "ripple", "sparks"]
+});
+var EFFECT_DEFAULTS = {
+  shape: "bar",
+  motion: "glide",
+  rest: "fade",
+  glow: false,
+  aurora: false,
+  trail: "none",
+  typing: "none"
+};
 var DEFAULT_SETTINGS = Object.freeze({
-  caret: true,
-  fade: true,
+  ...EFFECT_DEFAULTS,
   colorMode: "theme",
   customColor: "",
   lists: true,
   renumber: true
 });
+var PRESETS = Object.freeze([
+  { id: "fade", name: "\u67D4\u548C\u6E10\u9690", tag: "\u5B89\u9759", values: {} },
+  { id: "glow", name: "\u5FAE\u5149\u547C\u5438", tag: "\u795E\u79D8", values: { rest: "breathe", glow: true } },
+  { id: "ink", name: "\u58A8\u8FF9\u4F59\u97F5", tag: "\u795E\u79D8", values: { trail: "ink" } },
+  { id: "spring", name: "\u5F39\u6027\u8DDF\u968F", tag: "\u7075\u52A8", values: { motion: "spring" } },
+  { id: "block", name: "\u7EC8\u7AEF\u65B9\u5757", tag: "\u590D\u53E4", values: { shape: "block", motion: "instant", rest: "blink" } },
+  { id: "underline", name: "\u4E0B\u5212\u7EBF", tag: "\u6781\u7B80", values: { shape: "underline" } },
+  { id: "ripple", name: "\u843D\u5B57\u6D9F\u6F2A", tag: "\u7075\u52A8", values: { typing: "ripple" } },
+  { id: "aurora", name: "\u6781\u5149\u6D41\u8F6C", tag: "\u534E\u4E3D", values: { aurora: true } },
+  { id: "sparks", name: "\u6253\u5B57\u706B\u82B1", tag: "\u70ED\u95F9", values: { typing: "sparks" } }
+]);
+var presetValues = (preset) => ({ ...EFFECT_DEFAULTS, ...preset.values });
+function matchPreset(settings) {
+  return PRESETS.find((p) => {
+    const v = presetValues(p);
+    return Object.keys(EFFECT_DEFAULTS).every((k) => settings[k] === v[k]);
+  })?.id ?? null;
+}
 var isHexColor = (value) => typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value);
+var pick = (value, allowed, fallback) => allowed.includes(value) ? value : fallback;
+var bool = (value, fallback) => typeof value === "boolean" ? value : fallback;
 function normalizeSettings(raw) {
   const v = raw && typeof raw === "object" ? raw : {};
+  const legacyMotion = v.caret === false ? "instant" : void 0;
+  const legacyRest = v.fade === false ? "blink" : void 0;
   return {
-    caret: typeof v.caret === "boolean" ? v.caret : true,
-    fade: typeof v.fade === "boolean" ? v.fade : true,
+    shape: pick(v.shape, CARET_AXES.shape, "bar"),
+    motion: pick(v.motion ?? legacyMotion, CARET_AXES.motion, "glide"),
+    rest: pick(v.rest ?? legacyRest, CARET_AXES.rest, "fade"),
+    glow: bool(v.glow, false),
+    aurora: bool(v.aurora, false),
+    trail: pick(v.trail, CARET_AXES.trail, "none"),
+    typing: pick(v.typing, CARET_AXES.typing, "none"),
     colorMode: v.colorMode === "custom" && isHexColor(v.customColor) ? "custom" : "theme",
     customColor: isHexColor(v.customColor) ? v.customColor.toLowerCase() : "",
-    lists: typeof v.lists === "boolean" ? v.lists : true,
-    renumber: typeof v.renumber === "boolean" ? v.renumber : true
+    lists: bool(v.lists, true),
+    renumber: bool(v.renumber, true)
   };
 }
+var needsOverlay = (s) => s.shape !== "bar" || s.glow || s.aurora || s.rest === "breathe";
 function themeHex() {
   const probe = document.createElement("span");
   probe.style.color = "var(--ui-accent, currentColor)";
@@ -17928,9 +17971,10 @@ function themeHex() {
 }
 
 // src/caret.js
+var MAX_FX = 24;
 function mountCaret(settings) {
   const styled = /* @__PURE__ */ new Map();
-  const supportsFade = CSS.supports("caret-animation", "manual");
+  const supportsManual = CSS.supports("caret-animation", "manual");
   function styleEditor(el) {
     if (!styled.has(el))
       styled.set(el, {
@@ -17939,7 +17983,8 @@ function mountCaret(settings) {
       });
     const cfg = settings();
     el.dataset.clCursorStyle = "";
-    el.toggleAttribute("data-cl-soft", !!cfg.fade && supportsFade);
+    el.toggleAttribute("data-cl-soft", cfg.rest === "fade" && supportsManual);
+    el.toggleAttribute("data-cl-steady", cfg.rest === "steady" && supportsManual);
     el.style.setProperty(
       "--cl-caret-color",
       cfg.colorMode === "custom" && isHexColor(cfg.customColor) ? cfg.customColor : "var(--ui-accent, currentColor)"
@@ -17949,7 +17994,9 @@ function mountCaret(settings) {
     for (const a of el.getAnimations())
       if (a.animationName === "cl-native-fade") a.cancel();
     el.removeAttribute("data-cl-soft");
+    el.removeAttribute("data-cl-steady");
     el.removeAttribute("data-cl-cursor-style");
+    el.removeAttribute("data-cl-caret");
     if (saved.value)
       el.style.setProperty("--cl-caret-color", saved.value, saved.priority);
     else el.style.removeProperty("--cl-caret-color");
@@ -17984,19 +18031,26 @@ function mountCaret(settings) {
   layer.setAttribute("aria-hidden", "true");
   const cursor = document.createElement("i");
   cursor.className = "cl-caret";
+  const core = document.createElement("b");
+  core.className = "cl-caret-core";
+  cursor.append(core);
   layer.append(cursor);
-  document.body.append(layer);
+  const fx = document.createElement("div");
+  fx.className = "cl-fx-layer";
+  fx.setAttribute("aria-hidden", "true");
+  document.body.append(layer, fx);
   const reduced = matchMedia("(prefers-reduced-motion: reduce)");
-  let editor = null, previous = null, animation = null, frame = 0, composing = false, compositionEditor = null, disposed = false, generation = 0;
+  let editor = null, previous = null, animation = null, frame = 0, composing = false, compositionEditor = null, disposed = false, generation = 0, burst = false, resting = false;
   let lastNode = null, lastAt = "";
-  function restartFade(el) {
+  function restartRest(el) {
     for (const a of el.getAnimations())
-      if (a.animationName === "cl-native-fade") a.currentTime = 0;
+      if (/^cl-(native-fade|rest-)/.test(a.animationName)) a.currentTime = 0;
   }
   function stop() {
     generation++;
     animation?.cancel();
     animation = null;
+    resting = false;
     layer.hidden = true;
     editor?.removeAttribute("data-cl-caret");
   }
@@ -18004,22 +18058,100 @@ function mountCaret(settings) {
     stop();
     previous = null;
   }
+  function paint(q, cfg, persistent) {
+    const cs = getComputedStyle(editor);
+    const color = cs.getPropertyValue("--cl-caret-color").trim() || cs.color;
+    cursor.style.setProperty("--cl-c", color);
+    const h = Math.min(q.height, 32);
+    let w = 2, dy = 0, ch = h;
+    if (persistent && cfg.shape !== "bar") {
+      w = Math.max(6, Math.round(q.charWidth || h * 0.5));
+      if (cfg.shape === "underline") {
+        dy = h - 2;
+        ch = 2;
+      }
+    }
+    core.style.width = `${w}px`;
+    core.style.height = `${ch}px`;
+    core.style.transform = dy ? `translateY(${dy}px)` : "";
+    cursor.className = "cl-caret" + (persistent ? ` cl-shape-${cfg.shape} cl-rest-${cfg.rest}` + (cfg.glow ? " cl-glow" : "") + (cfg.aurora ? " cl-aurora" : "") : "");
+  }
+  function charWidthAt(r) {
+    const n = r.startContainer, o = r.startOffset;
+    if (n.nodeType !== 3 || o >= n.length || n.data[o] === "\n") return 0;
+    const probe = document.createRange();
+    probe.setStart(n, o);
+    probe.setEnd(n, o + 1);
+    return probe.getBoundingClientRect().width;
+  }
+  function spawn(el, keyframes, ms) {
+    if (fx.childElementCount >= MAX_FX) fx.firstElementChild?.remove();
+    fx.append(el);
+    const a = el.animate(keyframes, { duration: ms, easing: "cubic-bezier(.2,.8,.3,1)" });
+    a.finished.then(() => el.remove(), () => el.remove());
+  }
+  function inkTrail(from, q, color) {
+    if (Math.abs(from.top - q.top) > q.height / 2) return;
+    const dx = q.left - from.left;
+    if (Math.abs(dx) < 4) return;
+    const el = document.createElement("i");
+    el.className = "cl-ink";
+    el.style.setProperty("--cl-c", color);
+    el.style.left = `${Math.min(from.left, q.left)}px`;
+    el.style.top = `${q.top}px`;
+    el.style.width = `${Math.abs(dx)}px`;
+    el.style.height = `${Math.min(q.height, 32)}px`;
+    el.style.background = `linear-gradient(${dx > 0 ? 90 : 270}deg, transparent, color-mix(in srgb, ${color} 50%, transparent))`;
+    spawn(el, [{ opacity: 0.9, filter: "blur(0)" }, { opacity: 0, filter: "blur(3px)" }], 420);
+  }
+  function typingBurst(q, kind, color) {
+    const x = q.left, y = q.top + Math.min(q.height, 32) / 2;
+    if (kind === "ripple") {
+      const el = document.createElement("i");
+      el.className = "cl-ripple";
+      el.style.setProperty("--cl-c", color);
+      el.style.left = `${x}px`;
+      el.style.top = `${y}px`;
+      spawn(el, [{ transform: "scale(1)", opacity: 0.8 }, { transform: "scale(5)", opacity: 0 }], 600);
+      return;
+    }
+    for (let k = 0; k < 3; k++) {
+      const el = document.createElement("i");
+      el.className = "cl-spark";
+      el.style.setProperty("--cl-c", color);
+      el.style.left = `${x}px`;
+      el.style.top = `${y}px`;
+      const dx = (Math.random() - 0.3) * 26, dy = -8 - Math.random() * 14;
+      spawn(
+        el,
+        [{ transform: "translate(0,0)", opacity: 1 }, { transform: `translate(${dx}px,${dy}px)`, opacity: 0 }],
+        420 + Math.random() * 200
+      );
+    }
+  }
   function measure() {
     const next = document.activeElement?.closest?.(SELECTOR), s = getSelection();
     if (next !== editor) {
       release();
       editor = next;
     }
-    if (editor?.isConnected && s?.rangeCount && editor.contains(s.focusNode)) {
-      const at = `${s.focusOffset}`;
-      if (s.focusNode !== lastNode || at !== lastAt) {
-        lastNode = s.focusNode;
-        lastAt = at;
-        restartFade(editor);
-      }
+    const cfg = settings();
+    const moved = editor?.isConnected && s?.rangeCount && editor.contains(s.focusNode) && (s.focusNode !== lastNode || `${s.focusOffset}` !== lastAt);
+    if (moved) {
+      lastNode = s.focusNode;
+      lastAt = `${s.focusOffset}`;
+      restartRest(editor);
+      restartRest(core);
     }
     const ime = composing && editor === compositionEditor;
-    if (!settings().caret || reduced.matches || !editor?.isConnected || document.hidden || !s?.rangeCount || !s.isCollapsed && !ime || !editor.contains(s.focusNode)) {
+    if (reduced.matches || !editor?.isConnected || document.hidden || !s?.rangeCount || !s.isCollapsed && !ime || !editor.contains(s.focusNode)) {
+      burst = false;
+      release();
+      return;
+    }
+    const persistent = needsOverlay(cfg);
+    if (!persistent && cfg.motion === "instant" && cfg.trail === "none" && cfg.typing === "none") {
+      burst = false;
       release();
       return;
     }
@@ -18028,37 +18160,55 @@ function mountCaret(settings) {
     r.collapse(true);
     const q = caretRect(r), bounds = editor.getBoundingClientRect();
     if (!q?.height || q.top < bounds.top - 1 || q.top > bounds.bottom || q.left < bounds.left - 2 || q.left > bounds.right + 2) {
+      burst = false;
       release();
       return;
     }
-    if (!previous) {
+    q.charWidth = persistent && cfg.shape !== "bar" ? charWidthAt(r) : 0;
+    const cs = getComputedStyle(editor);
+    const color = cs.getPropertyValue("--cl-caret-color").trim() || cs.color;
+    if (burst) {
+      burst = false;
+      if (cfg.typing !== "none") typingBurst(q, cfg.typing, color);
+    }
+    const same = previous && Math.abs(previous.x - q.left) < 0.5 && Math.abs(previous.y - q.top) < 0.5;
+    if (persistent) {
+      paint(q, cfg, true);
+      if (same && (resting || animation)) return;
+    } else if (!previous || same) {
       previous = { x: q.left, y: q.top };
       return;
     }
-    if (Math.abs(previous.x - q.left) < 0.5 && Math.abs(previous.y - q.top) < 0.5)
-      return;
-    const from = animation && !layer.hidden ? cursor.getBoundingClientRect() : { left: previous.x, top: previous.y };
+    const from = animation && !layer.hidden ? cursor.getBoundingClientRect() : previous ? { left: previous.x, top: previous.y } : null;
     stop();
     previous = { x: q.left, y: q.top };
-    if (Math.abs(from.left - q.left) > 260 || Math.abs(from.top - q.top) > q.height * 2.2)
-      return;
+    if (from && cfg.trail === "ink" && !same) inkTrail(from, q, color);
+    const far = !from || Math.abs(from.left - q.left) > 260 || Math.abs(from.top - q.top) > q.height * 2.2;
+    const animate = cfg.motion !== "instant" && !far && !same;
+    if (!persistent && !animate) return;
     editor.dataset.clCaret = "";
     layer.hidden = false;
-    const cs = getComputedStyle(editor);
-    cursor.style.background = cs.getPropertyValue("--cl-caret-color").trim() || cs.color;
-    cursor.style.height = `${Math.min(q.height, 32)}px`;
+    paint(q, cfg, persistent);
     cursor.style.transform = `translate3d(${q.left}px,${q.top}px,0)`;
     const token = ++generation;
+    if (!animate) {
+      resting = persistent;
+      return;
+    }
+    const spring = cfg.motion === "spring";
     animation = cursor.animate(
       [
         { transform: `translate3d(${from.left}px,${from.top}px,0)` },
         { transform: `translate3d(${q.left}px,${q.top}px,0)` }
       ],
-      { duration: ime ? 190 : 165, easing: "cubic-bezier(.16,1,.3,1)" }
+      spring ? { duration: 300, easing: "cubic-bezier(.34,1.56,.64,1)" } : { duration: ime ? 190 : 165, easing: "cubic-bezier(.16,1,.3,1)" }
     );
     animation.finished.then(
       () => {
-        if (!disposed && token === generation) stop();
+        if (disposed || token !== generation) return;
+        animation = null;
+        if (persistent) resting = true;
+        else stop();
       },
       () => {
       }
@@ -18085,9 +18235,11 @@ function mountCaret(settings) {
       schedule();
     }
   };
-  const end = () => {
+  const end = (e) => {
+    const committed = composing && e?.type === "compositionend" && e.data;
     composing = false;
     compositionEditor = null;
+    if (committed) burst = true;
     schedule();
   };
   const heal = (e) => {
@@ -18097,12 +18249,15 @@ function mountCaret(settings) {
     if (composing) end();
     else schedule();
   };
+  const input = (e) => {
+    lastAt = "";
+    if (!e.isComposing && /^insert(Text|ReplacementText|FromPaste)?$/.test(e.inputType || "") && e.target.closest?.(SELECTOR))
+      burst = true;
+    schedule();
+  };
   const events = [
     ["selectionchange", schedule],
-    ["input", () => {
-      lastAt = "";
-      schedule();
-    }],
+    ["input", input],
     ["focusin", schedule],
     ["focusout", leave],
     ["keydown", heal],
@@ -18119,6 +18274,7 @@ function mountCaret(settings) {
   return {
     refresh() {
       for (const el of styled.keys()) styleEditor(el);
+      release();
       schedule();
     },
     dispose() {
@@ -18133,6 +18289,7 @@ function mountCaret(settings) {
       window.removeEventListener("resize", schedule);
       reduced.removeEventListener("change", schedule);
       layer.remove();
+      fx.remove();
     }
   };
 }
@@ -18144,44 +18301,72 @@ var CSS2 = `
 @keyframes cl-native-fade { 0%,40%,100% {caret-color:var(--cl-caret-color,var(--ui-accent));} 70% {caret-color:transparent;} }
 @supports (caret-animation:manual) {
  [data-cl-soft]:focus {caret-animation:manual;animation:cl-native-fade 1200ms ease-in-out infinite;}
+ [data-cl-steady]:focus {caret-animation:manual;}
 }
 [data-cl-caret] {caret-color:transparent!important;}
-.cl-caret-layer {position:fixed;inset:0;pointer-events:none!important;z-index:2147483000;overflow:hidden;}
+.cl-caret-layer,.cl-fx-layer {position:fixed;inset:0;pointer-events:none!important;z-index:2147483000;overflow:hidden;}
 .cl-caret-layer[hidden] {display:none!important;}
-.cl-caret {position:fixed;top:0;left:0;width:2px;border-radius:1px;pointer-events:none;will-change:transform;}
+.cl-caret {position:fixed;top:0;left:0;pointer-events:none;will-change:transform;display:block;}
+.cl-caret-core {display:block;border-radius:1px;background:var(--cl-c);}
+.cl-shape-block .cl-caret-core {background:color-mix(in srgb,var(--cl-c) 55%,transparent);border-radius:2px;}
+.cl-shape-underline .cl-caret-core {border-radius:1px;}
+.cl-glow .cl-caret-core {box-shadow:0 0 6px 1px var(--cl-c),0 0 14px 3px color-mix(in srgb,var(--cl-c) 40%,transparent);}
+.cl-rest-fade .cl-caret-core {animation:cl-rest-fade 1200ms ease-in-out infinite;}
+.cl-rest-breathe .cl-caret-core {animation:cl-rest-breathe 2400ms ease-in-out infinite;}
+.cl-rest-blink .cl-caret-core {animation:cl-rest-blink 1060ms steps(1,end) infinite;}
+.cl-aurora {animation:cl-aurora 6s linear infinite;}
+@keyframes cl-rest-fade {0%,40%,100% {opacity:1;} 70% {opacity:0;}}
+@keyframes cl-rest-breathe {0%,100% {opacity:1;} 50% {opacity:.45;}}
+@keyframes cl-rest-blink {0% {opacity:1;} 50% {opacity:0;}}
+@keyframes cl-aurora {from {filter:hue-rotate(0deg);} to {filter:hue-rotate(360deg);}}
+.cl-ink,.cl-ripple,.cl-spark {position:fixed;pointer-events:none;display:block;}
+.cl-ink {border-radius:2px;}
+.cl-ripple {width:6px;height:6px;margin:-3px 0 0 -3px;border-radius:50%;border:1px solid var(--cl-c);}
+.cl-spark {width:3px;height:3px;margin:-1.5px 0 0 -1.5px;border-radius:50%;background:var(--cl-c);}
 ::highlight(cl-list-mark) {color:var(--ui-accent);}
 ::highlight(cl-list-task) {color:var(--ui-text-secondary);}
 [data-cl-managed] {white-space:pre-wrap;}
 [data-cl-managed] :where(span,font):not([data-ref-text],[data-ref-text] *) {color:inherit!important;-webkit-text-fill-color:currentColor!important;}
 @media (prefers-reduced-motion:reduce) {
  [data-cl-soft]:focus {animation:none;caret-animation:auto;}
- .cl-caret-layer {display:none!important;}
+ .cl-caret-layer,.cl-fx-layer {display:none!important;}
 }
-.cl-dialog {max-width:min(480px,calc(100vw - 32px))!important;max-height:calc(100dvh - 48px);}
-.cl-panel {display:grid;gap:16px;color:var(--ui-text-primary);font-size:.8125rem;}
+.cl-dialog {max-width:min(500px,calc(100vw - 32px))!important;max-height:calc(100dvh - 48px);overflow-y:auto;}
+.cl-panel {display:grid;gap:14px;color:var(--ui-text-primary);font-size:.8125rem;}
+.cl-tabs {display:flex;justify-content:space-between;align-items:center;gap:12px;}
 .cl-group {display:grid;gap:0;}
-.cl-section-title {margin:0 0 4px;font-size:.6875rem;font-weight:500;color:var(--ui-text-tertiary,var(--ui-text-secondary));}
-.cl-setting {display:flex;align-items:center;justify-content:space-between;gap:20px;padding:10px 0;border-bottom:1px solid var(--ui-stroke-secondary);}
+.cl-section-title {margin:0 0 6px;font-size:.6875rem;font-weight:500;color:var(--ui-text-tertiary,var(--ui-text-secondary));}
+.cl-presets {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;}
+.cl-preset {display:grid;gap:1px;text-align:left;padding:7px 9px;border-radius:6px;border:1px solid var(--ui-stroke-secondary);background:transparent;color:var(--ui-text-primary);cursor:pointer;font:inherit;}
+.cl-preset:hover {border-color:color-mix(in srgb,var(--ui-accent) 60%,var(--ui-stroke-secondary));}
+.cl-preset[aria-pressed=true] {border-color:var(--ui-accent);background:color-mix(in srgb,var(--ui-accent) 10%,transparent);}
+.cl-preset:focus-visible {outline:2px solid var(--ui-accent);outline-offset:1px;}
+.cl-preset-name {font-size:.75rem;line-height:1.35;}
+.cl-preset-tag {font-size:.625rem;color:var(--ui-text-tertiary,var(--ui-text-secondary));}
+.cl-setting {display:flex;align-items:center;justify-content:space-between;gap:16px;padding:8px 0;border-bottom:1px solid var(--ui-stroke-secondary);}
 .cl-setting:last-child {border-bottom:0;}
 .cl-label {font-size:.8125rem;line-height:1.4;}
 .cl-detail,.cl-hint {font-size:.6875rem;line-height:1.6;color:var(--ui-text-secondary);}
-.cl-detail {margin-top:3px;}
-.cl-color-fields {display:flex;align-items:center;gap:8px;padding:4px 0 8px;}
+.cl-detail {margin-top:2px;}
+.cl-more {justify-self:start;padding:2px 0;border:0;background:none;color:var(--ui-text-secondary);font:inherit;font-size:.6875rem;cursor:pointer;}
+.cl-more:hover {color:var(--ui-text-primary);}
+.cl-color-fields {display:flex;align-items:center;gap:8px;padding:2px 0 8px;}
 .cl-swatch {flex:none;width:32px;height:28px;padding:3px;cursor:pointer;}
 .cl-hex {width:112px;font-family:var(--font-mono,monospace);font-size:.75rem;}
 .cl-error {color:var(--ui-danger,var(--ui-text-primary));font-size:.6875rem;}
-.cl-shortcuts {display:flex;flex-wrap:wrap;gap:6px 14px;padding-top:6px;font-size:.6875rem;color:var(--ui-text-secondary);}
+.cl-shortcuts {display:grid;grid-template-columns:auto 1fr;gap:4px 14px;padding-top:8px;font-size:.6875rem;color:var(--ui-text-secondary);}
 .cl-shortcuts kbd {color:var(--ui-text-primary);font-family:var(--font-mono,monospace);font-size:inherit;}
-.cl-demo {padding:10px 12px;border:1px solid var(--ui-stroke-secondary);border-radius:6px;min-height:72px;max-height:140px;overflow:auto;white-space:pre-wrap;outline:none;font-size:.8125rem;line-height:1.6;background:var(--ui-bg-field,var(--ui-bg-secondary));}
+.cl-demo-head {display:flex;justify-content:space-between;align-items:center;}
+.cl-demo {padding:10px 12px;border:1px solid var(--ui-stroke-secondary);border-radius:6px;min-height:64px;max-height:130px;overflow:auto;white-space:pre-wrap;outline:none;font-size:.8125rem;line-height:1.6;background:var(--ui-bg-field,var(--ui-bg-secondary));}
 .cl-demo:focus {border-color:var(--ui-accent);}
 .cl-demo:empty::before {content:attr(data-placeholder);color:var(--ui-text-tertiary,var(--ui-text-secondary));pointer-events:none;}
-.cl-preview {margin:6px 0 0;font-family:var(--font-mono,monospace);font-size:.6875rem;line-height:1.5;white-space:pre-wrap;max-height:64px;overflow:auto;color:var(--ui-text-secondary);}
-.cl-footer {display:flex;justify-content:space-between;align-items:center;gap:12px;border-top:1px solid var(--ui-stroke-secondary);padding-top:12px;}
+.cl-preview {margin:6px 0 0;font-family:var(--font-mono,monospace);font-size:.6875rem;line-height:1.5;white-space:pre-wrap;max-height:56px;overflow:auto;color:var(--ui-text-secondary);}
+.cl-footer {display:flex;justify-content:space-between;align-items:center;gap:12px;border-top:1px solid var(--ui-stroke-secondary);padding-top:10px;}
 `;
 var plugin_default = {
   id: "composer-lab",
   name: "Composer Lab \xB7 \u8F93\u5165\u5B9E\u9A8C\u5BA4",
-  description: "\u4E3B\u9898\u8272\u5149\u6807\u3001\u67D4\u548C\u6E10\u9690\u6E10\u73B0\u4E0E Markdown \u5217\u8868\u589E\u5F3A\u3002\u5B9E\u9A8C\u6027 DOM \u9002\u914D\uFF0C\u4E0D\u4FEE\u6539\u6838\u5FC3\u3002",
+  description: "\u4E5D\u79CD\u53EF\u7EC4\u5408\u7684\u5149\u6807\u6548\u679C\u4E0E Markdown \u5217\u8868\u589E\u5F3A\u3002\u5B9E\u9A8C\u6027 DOM \u9002\u914D\uFF0C\u4E0D\u4FEE\u6539\u6838\u5FC3\u3002",
   register(ctx) {
     let settings = normalizeSettings(ctx.storage.get("settings", {}));
     ctx.storage.set("settings", settings);
@@ -18192,7 +18377,7 @@ var plugin_default = {
       for (const fn of subscribers) fn();
     };
     const style = document.createElement("style");
-    style.dataset.composerLab = "0.4.0";
+    style.dataset.composerLab = "0.5.0";
     style.textContent = CSS2;
     document.head.append(style);
     const caret = mountCaret(() => settings);
@@ -18279,7 +18464,7 @@ var plugin_default = {
         },
         () => version
       );
-      const [preview, setPreview] = useState(""), [hexDraft, setHexDraft] = useState(null), demo = useRef(null);
+      const [preview, setPreview] = useState(""), [hexDraft, setHexDraft] = useState(null), [tab, setTab] = useState("caret"), [more, setMore] = useState(false), demo = useRef(null);
       const toggle = (key, label, detail) => jsxs(
         "div",
         {
@@ -18292,19 +18477,36 @@ var plugin_default = {
                   htmlFor: `cl-${key}`,
                   children: label
                 }),
-                jsx("div", {
+                detail ? jsx("div", {
                   id: `cl-${key}-detail`,
                   className: "cl-detail",
                   children: detail
-                })
+                }) : null
               ]
             }),
             jsx(Switch, {
               id: `cl-${key}`,
               type: "button",
-              "aria-describedby": `cl-${key}-detail`,
+              "aria-describedby": detail ? `cl-${key}-detail` : void 0,
               checked: key === "lists" ? settings.lists && !listsPaused : settings[key],
               onCheckedChange: (v) => change({ [key]: v })
+            })
+          ]
+        },
+        key
+      );
+      const choice = (key, label, options) => jsxs(
+        "div",
+        {
+          className: "cl-setting",
+          role: "group",
+          "aria-label": label,
+          children: [
+            jsx("span", { className: "cl-label", children: label }),
+            jsx(SegmentedControl, {
+              value: settings[key],
+              onChange: (v) => change({ [key]: v }),
+              options
             })
           ]
         },
@@ -18318,6 +18520,194 @@ var plugin_default = {
         });
       };
       const hasHexError = hexDraft !== null && !isHexColor(hexDraft);
+      const current = matchPreset(settings);
+      const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const caretTab = [
+        jsxs(
+          "section",
+          {
+            className: "cl-group",
+            "aria-label": "\u5149\u6807\u98CE\u683C",
+            children: [
+              jsx("h3", {
+                className: "cl-section-title",
+                children: current ? "\u98CE\u683C" : "\u98CE\u683C \xB7 \u5F53\u524D\u4E3A\u81EA\u5B9A\u4E49\u7EC4\u5408"
+              }),
+              jsx("div", {
+                className: "cl-presets",
+                children: PRESETS.map(
+                  (preset) => jsxs(
+                    "button",
+                    {
+                      type: "button",
+                      className: "cl-preset",
+                      "aria-pressed": current === preset.id,
+                      onClick: () => change(presetValues(preset)),
+                      children: [
+                        jsx("span", { className: "cl-preset-name", children: preset.name }),
+                        jsx("span", { className: "cl-preset-tag", children: preset.tag })
+                      ]
+                    },
+                    preset.id
+                  )
+                )
+              })
+            ]
+          },
+          "presets"
+        ),
+        jsxs(
+          "section",
+          {
+            className: "cl-group",
+            "aria-label": "\u5149\u6807\u989C\u8272",
+            children: [
+              jsxs("div", {
+                className: "cl-setting",
+                children: [
+                  jsx("span", { className: "cl-label", children: "\u989C\u8272" }),
+                  jsx(SegmentedControl, {
+                    value: settings.colorMode,
+                    onChange: selectColor,
+                    options: [
+                      { id: "theme", label: "\u8DDF\u968F\u4E3B\u9898" },
+                      { id: "custom", label: "\u81EA\u5B9A\u4E49" }
+                    ]
+                  })
+                ]
+              }),
+              settings.colorMode === "custom" ? jsxs("div", {
+                children: [
+                  jsxs("div", {
+                    className: "cl-color-fields",
+                    children: [
+                      jsx(Input, {
+                        type: "color",
+                        className: "cl-swatch",
+                        "aria-label": "\u9009\u62E9\u5149\u6807\u989C\u8272",
+                        value: settings.customColor,
+                        onChange: (e) => {
+                          setHexDraft(null);
+                          change({ customColor: e.target.value });
+                        }
+                      }),
+                      jsx(Input, {
+                        type: "text",
+                        className: "cl-hex",
+                        "aria-label": "\u5149\u6807\u989C\u8272\u5341\u516D\u8FDB\u5236",
+                        "aria-invalid": hasHexError,
+                        value: hexDraft ?? settings.customColor,
+                        maxLength: 7,
+                        spellCheck: false,
+                        onChange: (e) => {
+                          const v = e.target.value;
+                          setHexDraft(v);
+                          if (isHexColor(v)) change({ customColor: v });
+                        },
+                        onBlur: () => {
+                          if (!hasHexError) setHexDraft(null);
+                        }
+                      }),
+                      jsx("span", {
+                        className: "cl-hint",
+                        children: "\u53EA\u6539\u5149\u6807\uFF0C\u4E0D\u6539\u6B63\u6587"
+                      })
+                    ]
+                  }),
+                  hasHexError ? jsx("div", {
+                    className: "cl-error",
+                    role: "status",
+                    children: "\u8BF7\u8F93\u5165 # \u52A0\u516D\u4F4D\u5341\u516D\u8FDB\u5236\u989C\u8272\uFF1B\u65E0\u6548\u503C\u4E0D\u4F1A\u4FDD\u5B58\u3002"
+                  }) : null
+                ]
+              }) : null,
+              jsx("button", {
+                type: "button",
+                className: "cl-more",
+                "aria-expanded": more,
+                onClick: () => setMore(!more),
+                children: more ? "\u6536\u8D77\u7EC6\u8C03 \u25B4" : "\u7EC6\u8C03\u7EC4\u5408 \u25BE"
+              }),
+              more ? jsxs("div", {
+                className: "cl-group",
+                children: [
+                  choice("shape", "\u5F62\u72B6", [
+                    { id: "bar", label: "\u7AD6\u7EBF" },
+                    { id: "block", label: "\u65B9\u5757" },
+                    { id: "underline", label: "\u4E0B\u5212\u7EBF" }
+                  ]),
+                  choice("motion", "\u79FB\u52A8", [
+                    { id: "glide", label: "\u5E73\u6ED1" },
+                    { id: "spring", label: "\u5F39\u6027" },
+                    { id: "instant", label: "\u77AC\u79FB" }
+                  ]),
+                  choice("rest", "\u9759\u6B62", [
+                    { id: "fade", label: "\u6E10\u9690" },
+                    { id: "breathe", label: "\u547C\u5438" },
+                    { id: "blink", label: "\u95EA\u70C1" },
+                    { id: "steady", label: "\u5E38\u4EAE" }
+                  ]),
+                  choice("trail", "\u79FB\u52A8\u4F59\u97F5", [
+                    { id: "none", label: "\u65E0" },
+                    { id: "ink", label: "\u58A8\u8FF9" }
+                  ]),
+                  choice("typing", "\u8F93\u5165\u7279\u6548", [
+                    { id: "none", label: "\u65E0" },
+                    { id: "ripple", label: "\u6D9F\u6F2A" },
+                    { id: "sparks", label: "\u706B\u82B1" }
+                  ]),
+                  toggle("glow", "\u5149\u6655"),
+                  toggle("aurora", "\u6781\u5149\u6D41\u8F6C", "\u989C\u8272\u5728\u5F53\u524D\u8272\u9644\u8FD1\u7F13\u6162\u6D41\u8F6C\u3002")
+                ]
+              }) : null
+            ]
+          },
+          "color"
+        ),
+        reducedMotion ? jsx(
+          "div",
+          {
+            className: "cl-hint",
+            role: "status",
+            children: "\u7CFB\u7EDF\u5DF2\u5F00\u542F\u201C\u51CF\u5C11\u52A8\u6001\u6548\u679C\u201D\uFF1A\u5149\u6807\u52A8\u6548\u6682\u505C\uFF0C\u53EA\u4FDD\u7559\u989C\u8272\u3002"
+          },
+          "reduced"
+        ) : null
+      ];
+      const listTab = [
+        jsxs(
+          "section",
+          {
+            className: "cl-group",
+            "aria-label": "\u5217\u8868",
+            children: [
+              toggle(
+                "lists",
+                "\u5217\u8868\u589E\u5F3A",
+                listsPaused ? `\u672C\u6B21\u5DF2\u6682\u505C\uFF1A\u9047\u5230\u9519\u8BEF\uFF08${pauseReason}\uFF09\u3002\u91CD\u65B0\u6253\u5F00\u5F00\u5173\u5373\u53EF\u6062\u590D\u3002` : "\u7EED\u9879\u3001\u7F29\u8FDB\u3001\u9000\u7EA7\u90FD\u53EA\u6539\u884C\u9996\uFF0C\u6B63\u6587\u539F\u6837\u4FDD\u7559\u3002"
+              ),
+              toggle(
+                "renumber",
+                "\u81EA\u52A8\u6821\u6B63\u7F16\u53F7",
+                "\u5220\u9664\u3001\u526A\u5207\u6216\u7C98\u8D34\u6574\u884C\u540E\u81EA\u52A8\u6392\u6210\u8FDE\u7EED\u7F16\u53F7\uFF1B\u2318Z \u53EF\u64A4\u56DE\u3002"
+              ),
+              jsx("div", {
+                className: "cl-shortcuts",
+                children: [
+                  ["\u21E7 Enter", "\u6362\u884C\uFF1B\u5217\u8868\u91CC\u7EED\u51FA\u4E0B\u4E00\u9879"],
+                  ["Tab / \u21E7 Tab", "\u5217\u8868\u9879\u7F29\u8FDB / \u9000\u7EA7"],
+                  ["\u232B", "\u7D27\u8DDF\u5728\u7B26\u53F7\u540E\u65F6\u9000\u7EA7\u6216\u53BB\u6389\u7B26\u53F7"],
+                  ["Enter", "\u7167\u5E38\u53D1\u9001\uFF08\u8F93\u5165\u6CD5\u548C\u8865\u5168\u83DC\u5355\u4F18\u5148\uFF09"]
+                ].flatMap(([k, v]) => [
+                  jsx("kbd", { children: k }, k),
+                  jsx("span", { children: v }, k + "-d")
+                ])
+              })
+            ]
+          },
+          "lists"
+        )
+      ];
       return jsxs(Dialog, {
         open: opened === owner,
         onOpenChange: (v) => {
@@ -18363,162 +18753,32 @@ var plugin_default = {
                   children: [
                     jsx(DialogTitle, { children: "\u8F93\u5165\u5B9E\u9A8C\u5BA4" }),
                     jsx(DialogDescription, {
-                      children: "\u5149\u6807\u4E0E\u5217\u8868 \xB7 0.4.0 \u5B9E\u9A8C\u7248"
+                      children: "\u5149\u6807\u6548\u679C\u4E0E Markdown \u5217\u8868 \xB7 0.5.0"
                     })
                   ]
                 }),
-                jsxs("section", {
-                  className: "cl-group",
-                  "aria-label": "\u5149\u6807",
-                  children: [
-                    jsx("h3", {
-                      className: "cl-section-title",
-                      children: "\u5149\u6807"
-                    }),
-                    toggle(
-                      "fade",
-                      "\u67D4\u548C\u6E10\u9690\u6E10\u73B0",
-                      "\u505C\u7559\u65F6\u67D4\u548C\u6DE1\u5165\u6DE1\u51FA\uFF1B\u4E0D\u6539\u53D8\u8F93\u5165\u6846\u7684\u7126\u70B9\u548C idle\u3002"
-                    ),
-                    toggle(
-                      "caret",
-                      "\u5E73\u6ED1\u79FB\u52A8",
-                      "\u5355\u4E00\u5149\u6807\u8DDF\u968F\u8F93\u5165\u4F4D\u7F6E\uFF0C\u4E0D\u53E0\u52A0\u91CD\u5F71\u6216\u62D6\u5C3E\u3002"
-                    ),
-                    jsxs("div", {
-                      className: "cl-setting",
-                      children: [
-                        jsx("span", {
-                          className: "cl-label",
-                          children: "\u5149\u6807\u989C\u8272"
-                        }),
-                        jsx(SegmentedControl, {
-                          value: settings.colorMode,
-                          onChange: selectColor,
-                          options: [
-                            { id: "theme", label: "\u8DDF\u968F\u4E3B\u9898" },
-                            { id: "custom", label: "\u81EA\u5B9A\u4E49" }
-                          ]
-                        })
-                      ]
-                    }),
-                    settings.colorMode === "custom" ? jsxs("div", {
-                      children: [
-                        jsxs("div", {
-                          className: "cl-color-fields",
-                          children: [
-                            jsx(Input, {
-                              type: "color",
-                              className: "cl-swatch",
-                              "aria-label": "\u9009\u62E9\u5149\u6807\u989C\u8272",
-                              value: settings.customColor,
-                              onChange: (e) => {
-                                setHexDraft(null);
-                                change({ customColor: e.target.value });
-                              }
-                            }),
-                            jsx(Input, {
-                              type: "text",
-                              className: "cl-hex",
-                              "aria-label": "\u5149\u6807\u989C\u8272\u5341\u516D\u8FDB\u5236",
-                              "aria-invalid": hasHexError,
-                              value: hexDraft ?? settings.customColor,
-                              maxLength: 7,
-                              spellCheck: false,
-                              onChange: (e) => {
-                                const v = e.target.value;
-                                setHexDraft(v);
-                                if (isHexColor(v))
-                                  change({ customColor: v });
-                              },
-                              onBlur: () => {
-                                if (!hasHexError) setHexDraft(null);
-                              }
-                            }),
-                            jsx("span", {
-                              className: "cl-hint",
-                              children: "\u4EC5\u6539\u53D8\u5149\u6807\uFF0C\u4E0D\u6539\u53D8\u6B63\u6587"
-                            })
-                          ]
-                        }),
-                        hasHexError ? jsx("div", {
-                          className: "cl-error",
-                          role: "status",
-                          children: "\u8BF7\u8F93\u5165 # \u52A0\u516D\u4F4D\u5341\u516D\u8FDB\u5236\u989C\u8272\uFF1B\u65E0\u6548\u503C\u4E0D\u4F1A\u4FDD\u5B58\u3002"
-                        }) : null
-                      ]
-                    }) : jsx("div", {
-                      className: "cl-hint",
-                      children: "\u4F7F\u7528\u5F53\u524D\u4E3B\u9898\u7684\u5F3A\u8C03\u8272\uFF0C\u5207\u6362\u4E3B\u9898\u65F6\u81EA\u52A8\u8DDF\u968F\u3002"
-                    }),
-                    !globalThis.CSS.supports("caret-animation", "manual") ? jsx("div", {
-                      className: "cl-hint",
-                      role: "status",
-                      children: "\u6B64\u6D4F\u89C8\u5668\u4E0D\u652F\u6301\u67D4\u548C\u539F\u751F\u5149\u6807\uFF0C\u5DF2\u56DE\u9000\u4E3A\u7CFB\u7EDF\u95EA\u70C1\u3002"
-                    }) : null,
-                    matchMedia("(prefers-reduced-motion: reduce)").matches ? jsx("div", {
-                      className: "cl-hint",
-                      children: "\u7CFB\u7EDF\u5DF2\u5F00\u542F\u201C\u51CF\u5C11\u52A8\u6001\u6548\u679C\u201D\uFF0C\u5149\u6807\u52A8\u6548\u968F\u4E4B\u505C\u7528\u3002"
-                    }) : null
-                  ]
+                jsx("div", {
+                  className: "cl-tabs",
+                  children: jsx(SegmentedControl, {
+                    value: tab,
+                    onChange: setTab,
+                    options: [
+                      { id: "caret", label: "\u5149\u6807" },
+                      { id: "lists", label: "\u5217\u8868" }
+                    ]
+                  })
                 }),
+                ...tab === "caret" ? caretTab : listTab,
                 jsxs("section", {
                   className: "cl-group",
-                  "aria-label": "\u5217\u8868",
-                  children: [
-                    jsx("h3", {
-                      className: "cl-section-title",
-                      children: "\u5217\u8868"
-                    }),
-                    toggle(
-                      "lists",
-                      "\u5217\u8868\u589E\u5F3A",
-                      listsPaused ? `\u672C\u6B21\u5DF2\u6682\u505C\uFF1A\u9047\u5230\u9519\u8BEF\uFF08${pauseReason}\uFF09\u3002\u91CD\u65B0\u6253\u5F00\u5F00\u5173\u5373\u53EF\u6062\u590D\u3002` : "\u4FDD\u7559 Markdown \u539F\u6587\uFF1B\u81EA\u52A8\u7EED\u53F7\u3001\u7F29\u8FDB\u4E0E\u7A7A\u9879\u9000\u51FA\u3002"
-                    ),
-                    toggle(
-                      "renumber",
-                      "\u81EA\u52A8\u6821\u6B63\u7F16\u53F7",
-                      "\u5220\u9664\u3001\u526A\u5207\u6216\u7C98\u8D34\u6574\u884C\u540E\uFF0C\u628A\u6709\u5E8F\u5217\u8868\u91CD\u65B0\u6392\u6210\u8FDE\u7EED\u7F16\u53F7\uFF1B\u2318Z \u53EF\u64A4\u56DE\u3002"
-                    ),
-                    jsxs("div", {
-                      className: "cl-shortcuts",
-                      children: [
-                        jsxs("span", {
-                          children: [
-                            jsx("kbd", { children: "Enter" }),
-                            " \u53D1\u9001"
-                          ]
-                        }),
-                        jsxs("span", {
-                          children: [
-                            jsx("kbd", { children: "\u21E7 Enter" }),
-                            " \u6362\u884C / \u7EED\u9879"
-                          ]
-                        }),
-                        jsxs("span", {
-                          children: [
-                            jsx("kbd", { children: "Tab / \u21E7 Tab" }),
-                            " \u5217\u8868\u7F29\u8FDB"
-                          ]
-                        })
-                      ]
-                    }),
-                    jsx("div", {
-                      className: "cl-detail",
-                      children: "\u8F93\u5165\u6CD5\u5019\u9009\u786E\u8BA4\u548C\u8865\u5168\u83DC\u5355\u4F18\u5148\uFF1B\u53D1\u9001\u59CB\u7EC8\u7531 Hermes \u5904\u7406\u3002"
-                    })
-                  ]
-                }),
-                jsxs("section", {
-                  className: "cl-group",
-                  "aria-label": "\u5B89\u5168\u8BD5\u5199",
+                  "aria-label": "\u8BD5\u5199\u533A",
                   children: [
                     jsxs("div", {
-                      className: "cl-setting",
+                      className: "cl-demo-head",
                       children: [
                         jsx("h3", {
                           className: "cl-section-title",
-                          children: "\u5B89\u5168\u8BD5\u5199 \xB7 \u4E0D\u4F1A\u53D1\u9001\u6D88\u606F"
+                          children: "\u8BD5\u5199\u533A \xB7 \u4E0D\u4F1A\u53D1\u9001"
                         }),
                         jsx(Button, {
                           type: "button",
@@ -18544,32 +18804,27 @@ var plugin_default = {
                       onInput: (e) => setPreview(textOf(e.currentTarget)),
                       onKeyDown: (e) => {
                         e.stopPropagation();
-                        if (e.nativeEvent.isComposing || e.keyCode === 229)
-                          return;
+                        if (e.nativeEvent.isComposing || e.keyCode === 229) return;
                         if (e.key === "Enter" && !e.defaultPrevented) {
                           e.preventDefault();
                           document.execCommand("insertLineBreak");
                         }
                       },
-                      "data-placeholder": "\u8F93\u5165 1. \u7A7A\u683C\uFF0C\u6216\u76F4\u63A5\u8BD5\u8BD5\u4E2D\u6587\u2026"
+                      "data-placeholder": tab === "caret" ? "\u5728\u8FD9\u91CC\u6253\u5B57\u3001\u79FB\u52A8\u5149\u6807\uFF0C\u770B\u770B\u6548\u679C\u2026" : "\u8F93\u5165 1. \u52A0\u7A7A\u683C\uFF0C\u518D\u6309 \u21E7Enter / Tab \u8BD5\u8BD5\u2026"
                     }),
-                    jsx("pre", {
+                    tab === "lists" ? jsx("pre", {
                       className: "cl-preview",
                       "aria-label": "Markdown \u539F\u6587",
                       children: preview || "Markdown \u539F\u6587\u4F1A\u663E\u793A\u5728\u8FD9\u91CC"
-                    })
+                    }) : null
                   ]
-                }),
-                jsx("div", {
-                  className: "cl-hint",
-                  children: "\u4F7F\u7528\u5B9E\u9A8C\u6027 DOM \u9002\u914D\uFF0C\u975E\u5B98\u65B9\u7A33\u5B9A\u7F16\u8F91\u5668\u63A5\u53E3\u3002\u590D\u6742\u7C98\u8D34\u6216\u8D85\u957F\u8349\u7A3F\u4F1A\u8DF3\u8FC7\u6392\u7248\u3002"
                 }),
                 jsxs("div", {
                   className: "cl-footer",
                   children: [
                     jsx("span", {
                       className: "cl-hint",
-                      children: "\u5373\u65F6\u4FDD\u5B58 \xB7 \u65E0\u9700\u91CD\u542F"
+                      children: "\u5373\u65F6\u4FDD\u5B58 \xB7 \u5B9E\u9A8C\u6027\u63D2\u4EF6\uFF0C\u975E\u5B98\u65B9\u7F16\u8F91\u5668\u63A5\u53E3"
                     }),
                     jsx(Button, {
                       type: "button",
@@ -18614,7 +18869,7 @@ var plugin_default = {
         }
       }
     });
-    console.info("[composer-lab] 0.4.0 registered");
+    console.info("[composer-lab] 0.5.0 registered");
     ctx.onDispose(() => {
       lists.dispose();
       caret.dispose();

@@ -9,7 +9,9 @@ import {
 } from "@host/app/chat/composer/rich-editor.ts";
 import { mountLists, textOf, listEdit } from "../src/editor.js";
 import { mountCaret } from "../src/caret.js";
-window.settings = { lists: true, caret: true, blink: true, trail: false };
+import { normalizeSettings } from "../src/settings.js";
+window.settings = normalizeSettings({});
+window.normalizeSettings = normalizeSettings;
 window.fixtureErrors = [];
 window.listEdit = listEdit;
 function Editor() {

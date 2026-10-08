@@ -64,11 +64,11 @@ fs.mkdirSync(scratch, { recursive: true });
       },
     );
     await check(
-      "one moving cursor; no trail even with old stored trail preference",
+      "one moving cursor; legacy boolean trail preference is ignored",
       async () => {
         await set("smooth movement");
         await page.waitForTimeout(250);
-        await page.evaluate(() => (settings.trail = true));
+        await page.evaluate(() => (settings = normalizeSettings({ trail: true })));
         await page.locator("#editor").press("ArrowLeft");
         await page.waitForTimeout(30);
         assert.equal(await page.locator(".cl-caret").count(), 1);
@@ -302,6 +302,70 @@ fs.mkdirSync(scratch, { recursive: true });
       assert.equal(await read(), "- a\n  - see /usr/x");
       assert.equal(await page.evaluate(() => document.activeElement.id), "editor");
     });
+    await check("persistent effects keep exactly one caret and hide the native one", async () => {
+      for (const preset of [
+        { shape: "block", motion: "instant", rest: "blink" },
+        { shape: "underline" },
+        { rest: "breathe", glow: true },
+        { aurora: true },
+      ]) {
+        await page.evaluate((p) => {
+          settings = normalizeSettings(p);
+          caret.refresh();
+        }, preset);
+        await set("effect test");
+        await page.waitForTimeout(120);
+        await key("ArrowLeft");
+        await page.waitForTimeout(400);
+        const r = await page.evaluate(() => {
+          const c = document.querySelector(".cl-caret"),
+            core = c.firstChild.getBoundingClientRect();
+          return {
+            carets: document.querySelectorAll(".cl-caret").length,
+            visible: !document.querySelector(".cl-caret-layer").hidden,
+            nativeHidden: getComputedStyle(document.getElementById("editor")).caretColor === "rgba(0, 0, 0, 0)",
+            w: core.width,
+            h: core.height,
+          };
+        });
+        assert.equal(r.carets, 1);
+        assert.ok(r.visible, JSON.stringify(preset));
+        assert.ok(r.nativeHidden, JSON.stringify(preset));
+        if (preset.shape === "block") assert.ok(r.w >= 6 && r.h > 10, JSON.stringify(r));
+        if (preset.shape === "underline") assert.ok(r.w >= 6 && r.h === 2, JSON.stringify(r));
+      }
+      // Selecting text releases the overlay: native selection, no fake caret.
+      await page.evaluate(() => {
+        const e = document.getElementById("editor"), r = document.createRange();
+        r.selectNodeContents(e);
+        getSelection().removeAllRanges();
+        getSelection().addRange(r);
+      });
+      await page.waitForTimeout(60);
+      assert.equal(await page.locator(".cl-caret-layer").evaluate((e) => e.hidden), true);
+      await page.evaluate(() => {
+        settings = normalizeSettings({});
+        caret.refresh();
+      });
+    });
+    await check("typing effects and ink trail are transient and capped", async () => {
+      await page.evaluate(() => {
+        settings = normalizeSettings({ typing: "sparks", trail: "ink" });
+        caret.refresh();
+      });
+      await set("");
+      await page.locator("#editor").pressSequentially("abcdefghijklmnop", { delay: 5 });
+      await page.waitForTimeout(30);
+      const live = await page.evaluate(() => document.querySelector(".cl-fx-layer").childElementCount);
+      assert.ok(live > 0 && live <= 24, `live fx ${live}`);
+      await page.waitForTimeout(900);
+      assert.equal(await page.evaluate(() => document.querySelector(".cl-fx-layer").childElementCount), 0);
+      assert.equal(await read(), "abcdefghijklmnop");
+      await page.evaluate(() => {
+        settings = normalizeSettings({});
+        caret.refresh();
+      });
+    });
     await check(
       "disposal restores native source without changing text or focus",
       async () => {
@@ -316,7 +380,7 @@ fs.mkdirSync(scratch, { recursive: true });
         assert.equal(await read(), before);
         assert.equal(
           await page
-            .locator("[data-cl-managed],[data-cl-caret],.cl-caret-layer")
+            .locator("[data-cl-managed],[data-cl-caret],.cl-caret-layer,.cl-fx-layer")
             .count(),
           0,
         );

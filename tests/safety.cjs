@@ -89,10 +89,20 @@ fs.mkdirSync(scratch, { recursive: true });
     await check(
       "all settings toggles and reset preserve host draft and cannot submit",
       async () => {
-        for (const name of ["柔和渐隐渐现", "平滑移动", "列表增强"]) {
+        for (const name of ["微光呼吸", "终端方块", "打字火花", "柔和渐隐"])
+          await p.getByRole("button", { name, exact: false }).first().click();
+        assert.equal(await p.evaluate(() => saved.settings.rest), "fade");
+        await p.getByRole("button", { name: "细调组合 ▾" }).click();
+        await p.getByRole("switch", { name: "光晕", exact: true }).click();
+        assert.equal(await p.evaluate(() => saved.settings.glow), true);
+        assert.ok(await p.getByText("当前为自定义组合").count());
+        await p.getByRole("switch", { name: "光晕", exact: true }).click();
+        await p.getByRole("button", { name: "列表", exact: true }).click();
+        for (const name of ["列表增强", "自动校正编号"]) {
           await p.getByRole("switch", { name, exact: true }).click();
           await p.getByRole("switch", { name, exact: true }).click();
         }
+        await p.getByRole("button", { name: "光标", exact: true }).click();
         await p.getByRole("button", { name: "恢复默认" }).click();
         assert.equal(await p.evaluate(() => submits), 0);
         assert.equal(
@@ -245,7 +255,7 @@ fs.mkdirSync(scratch, { recursive: true });
         await open("fixture");
         await p.waitForFunction(() => window.fixture);
         await p.evaluate(() => {
-          settings.fade = true;
+          settings = normalizeSettings({});
           caret.refresh();
           fixture.set("fade test");
         });

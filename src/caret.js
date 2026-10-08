@@ -1,11 +1,18 @@
 import { SELECTOR } from "./surface.js";
-import { isHexColor } from "./settings.js";
+import { isHexColor, needsOverlay } from "./settings.js";
 import { caretRect } from "./editor.js";
-// Movement uses one temporary overlay. At rest CSS animates ONLY the native
-// caret-color: no idle clock, synthetic keystroke, focus(), or text color change.
+// One caret is ever visible. Two render modes:
+//  - native: the browser caret draws at rest (CSS animates only caret-color);
+//    the overlay appears just for the glide between positions;
+//  - overlay: effects the native caret cannot draw (block / underline shape,
+//    glow, breathing, aurora) use a persistent overlay while the native caret
+//    is transparent. Whenever the position is not trustworthy the overlay is
+//    released and the native caret shows again.
+// Transient effects (ink trail, ripples, sparks) live on a separate fx layer.
+const MAX_FX = 24;
 export function mountCaret(settings) {
   const styled = new Map();
-  const supportsFade = CSS.supports("caret-animation", "manual");
+  const supportsManual = CSS.supports("caret-animation", "manual");
   function styleEditor(el) {
     if (!styled.has(el))
       styled.set(el, {
@@ -14,7 +21,8 @@ export function mountCaret(settings) {
       });
     const cfg = settings();
     el.dataset.clCursorStyle = "";
-    el.toggleAttribute("data-cl-soft", !!cfg.fade && supportsFade);
+    el.toggleAttribute("data-cl-soft", cfg.rest === "fade" && supportsManual);
+    el.toggleAttribute("data-cl-steady", cfg.rest === "steady" && supportsManual);
     el.style.setProperty(
       "--cl-caret-color",
       cfg.colorMode === "custom" && isHexColor(cfg.customColor)
@@ -26,7 +34,9 @@ export function mountCaret(settings) {
     for (const a of el.getAnimations())
       if (a.animationName === "cl-native-fade") a.cancel();
     el.removeAttribute("data-cl-soft");
+    el.removeAttribute("data-cl-steady");
     el.removeAttribute("data-cl-cursor-style");
+    el.removeAttribute("data-cl-caret");
     if (saved.value)
       el.style.setProperty("--cl-caret-color", saved.value, saved.priority);
     else el.style.removeProperty("--cl-caret-color");
@@ -61,8 +71,14 @@ export function mountCaret(settings) {
   layer.setAttribute("aria-hidden", "true");
   const cursor = document.createElement("i");
   cursor.className = "cl-caret";
+  const core = document.createElement("b");
+  core.className = "cl-caret-core";
+  cursor.append(core);
   layer.append(cursor);
-  document.body.append(layer);
+  const fx = document.createElement("div");
+  fx.className = "cl-fx-layer";
+  fx.setAttribute("aria-hidden", "true");
+  document.body.append(layer, fx);
   const reduced = matchMedia("(prefers-reduced-motion: reduce)");
   let editor = null,
     previous = null,
@@ -71,23 +87,109 @@ export function mountCaret(settings) {
     composing = false,
     compositionEditor = null,
     disposed = false,
-    generation = 0;
+    generation = 0,
+    burst = false,
+    resting = false;
   let lastNode = null,
     lastAt = "";
-  function restartFade(el) {
+  function restartRest(el) {
     for (const a of el.getAnimations())
-      if (a.animationName === "cl-native-fade") a.currentTime = 0;
+      if (/^cl-(native-fade|rest-)/.test(a.animationName)) a.currentTime = 0;
   }
   function stop() {
     generation++;
     animation?.cancel();
     animation = null;
+    resting = false;
     layer.hidden = true;
     editor?.removeAttribute("data-cl-caret");
   }
   function release() {
     stop();
     previous = null;
+  }
+  // Paint the cursor box for the current settings at rect q.
+  function paint(q, cfg, persistent) {
+    const cs = getComputedStyle(editor);
+    const color = cs.getPropertyValue("--cl-caret-color").trim() || cs.color;
+    cursor.style.setProperty("--cl-c", color);
+    const h = Math.min(q.height, 32);
+    let w = 2,
+      dy = 0,
+      ch = h;
+    if (persistent && cfg.shape !== "bar") {
+      w = Math.max(6, Math.round(q.charWidth || h * 0.5));
+      if (cfg.shape === "underline") {
+        dy = h - 2;
+        ch = 2;
+      }
+    }
+    core.style.width = `${w}px`;
+    core.style.height = `${ch}px`;
+    core.style.transform = dy ? `translateY(${dy}px)` : "";
+    cursor.className =
+      "cl-caret" +
+      (persistent
+        ? ` cl-shape-${cfg.shape} cl-rest-${cfg.rest}` +
+          (cfg.glow ? " cl-glow" : "") +
+          (cfg.aurora ? " cl-aurora" : "")
+        : "");
+  }
+  function charWidthAt(r) {
+    const n = r.startContainer,
+      o = r.startOffset;
+    if (n.nodeType !== 3 || o >= n.length || n.data[o] === "\n") return 0;
+    const probe = document.createRange();
+    probe.setStart(n, o);
+    probe.setEnd(n, o + 1);
+    return probe.getBoundingClientRect().width;
+  }
+  function spawn(el, keyframes, ms) {
+    if (fx.childElementCount >= MAX_FX) fx.firstElementChild?.remove();
+    fx.append(el);
+    const a = el.animate(keyframes, { duration: ms, easing: "cubic-bezier(.2,.8,.3,1)" });
+    a.finished.then(() => el.remove(), () => el.remove());
+  }
+  function inkTrail(from, q, color) {
+    if (Math.abs(from.top - q.top) > q.height / 2) return;
+    const dx = q.left - from.left;
+    if (Math.abs(dx) < 4) return;
+    const el = document.createElement("i");
+    el.className = "cl-ink";
+    el.style.setProperty("--cl-c", color);
+    el.style.left = `${Math.min(from.left, q.left)}px`;
+    el.style.top = `${q.top}px`;
+    el.style.width = `${Math.abs(dx)}px`;
+    el.style.height = `${Math.min(q.height, 32)}px`;
+    el.style.background = `linear-gradient(${dx > 0 ? 90 : 270}deg, transparent, color-mix(in srgb, ${color} 50%, transparent))`;
+    spawn(el, [{ opacity: 0.9, filter: "blur(0)" }, { opacity: 0, filter: "blur(3px)" }], 420);
+  }
+  function typingBurst(q, kind, color) {
+    const x = q.left,
+      y = q.top + Math.min(q.height, 32) / 2;
+    if (kind === "ripple") {
+      const el = document.createElement("i");
+      el.className = "cl-ripple";
+      el.style.setProperty("--cl-c", color);
+      el.style.left = `${x}px`;
+      el.style.top = `${y}px`;
+      spawn(el, [{ transform: "scale(1)", opacity: 0.8 }, { transform: "scale(5)", opacity: 0 }], 600);
+      return;
+    }
+    for (let k = 0; k < 3; k++) {
+      const el = document.createElement("i");
+      el.className = "cl-spark";
+      el.style.setProperty("--cl-c", color);
+      el.style.left = `${x}px`;
+      el.style.top = `${y}px`;
+      const dx = (Math.random() - 0.3) * 26,
+        dy = -8 - Math.random() * 14;
+      spawn(
+        el,
+        [{ transform: "translate(0,0)", opacity: 1 }, { transform: `translate(${dx}px,${dy}px)`, opacity: 0 }],
+        420 + Math.random() * 200,
+      );
+    }
   }
   function measure() {
     const next = document.activeElement?.closest?.(SELECTOR),
@@ -96,19 +198,20 @@ export function mountCaret(settings) {
       release();
       editor = next;
     }
-    // Fade restarts fully opaque whenever the caret moves or text changes,
-    // like a native caret; it only fades while the caret rests.
-    if (editor?.isConnected && s?.rangeCount && editor.contains(s.focusNode)) {
-      const at = `${s.focusOffset}`;
-      if (s.focusNode !== lastNode || at !== lastAt) {
-        lastNode = s.focusNode;
-        lastAt = at;
-        restartFade(editor);
-      }
+    const cfg = settings();
+    const moved =
+      editor?.isConnected &&
+      s?.rangeCount &&
+      editor.contains(s.focusNode) &&
+      (s.focusNode !== lastNode || `${s.focusOffset}` !== lastAt);
+    if (moved) {
+      lastNode = s.focusNode;
+      lastAt = `${s.focusOffset}`;
+      restartRest(editor);
+      restartRest(core);
     }
     const ime = composing && editor === compositionEditor;
     if (
-      !settings().caret ||
       reduced.matches ||
       !editor?.isConnected ||
       document.hidden ||
@@ -116,6 +219,13 @@ export function mountCaret(settings) {
       (!s.isCollapsed && !ime) ||
       !editor.contains(s.focusNode)
     ) {
+      burst = false;
+      release();
+      return;
+    }
+    const persistent = needsOverlay(cfg);
+    if (!persistent && cfg.motion === "instant" && cfg.trail === "none" && cfg.typing === "none") {
+      burst = false;
       release();
       return;
     }
@@ -133,47 +243,69 @@ export function mountCaret(settings) {
       q.left < bounds.left - 2 ||
       q.left > bounds.right + 2
     ) {
+      burst = false;
       release();
       return;
     }
-    if (!previous) {
+    q.charWidth = persistent && cfg.shape !== "bar" ? charWidthAt(r) : 0;
+    const cs = getComputedStyle(editor);
+    const color = cs.getPropertyValue("--cl-caret-color").trim() || cs.color;
+    if (burst) {
+      burst = false;
+      if (cfg.typing !== "none") typingBurst(q, cfg.typing, color);
+    }
+    const same =
+      previous &&
+      Math.abs(previous.x - q.left) < 0.5 &&
+      Math.abs(previous.y - q.top) < 0.5;
+    if (persistent) {
+      // Keep the overlay up at rest; refresh its look/size even when still.
+      paint(q, cfg, true);
+      if (same && (resting || animation)) return;
+    } else if (!previous || same) {
       previous = { x: q.left, y: q.top };
       return;
     }
-    if (
-      Math.abs(previous.x - q.left) < 0.5 &&
-      Math.abs(previous.y - q.top) < 0.5
-    )
-      return;
     const from =
       animation && !layer.hidden
         ? cursor.getBoundingClientRect()
-        : { left: previous.x, top: previous.y };
+        : previous
+          ? { left: previous.x, top: previous.y }
+          : null;
     stop();
     previous = { x: q.left, y: q.top };
-    if (
+    if (from && cfg.trail === "ink" && !same) inkTrail(from, q, color);
+    const far =
+      !from ||
       Math.abs(from.left - q.left) > 260 ||
-      Math.abs(from.top - q.top) > q.height * 2.2
-    )
-      return;
+      Math.abs(from.top - q.top) > q.height * 2.2;
+    const animate = cfg.motion !== "instant" && !far && !same;
+    if (!persistent && !animate) return;
     editor.dataset.clCaret = "";
     layer.hidden = false;
-    const cs = getComputedStyle(editor);
-    cursor.style.background =
-      cs.getPropertyValue("--cl-caret-color").trim() || cs.color;
-    cursor.style.height = `${Math.min(q.height, 32)}px`;
+    paint(q, cfg, persistent);
     cursor.style.transform = `translate3d(${q.left}px,${q.top}px,0)`;
     const token = ++generation;
+    if (!animate) {
+      resting = persistent;
+      return;
+    }
+    const spring = cfg.motion === "spring";
     animation = cursor.animate(
       [
         { transform: `translate3d(${from.left}px,${from.top}px,0)` },
         { transform: `translate3d(${q.left}px,${q.top}px,0)` },
       ],
-      { duration: ime ? 190 : 165, easing: "cubic-bezier(.16,1,.3,1)" },
+      spring
+        ? { duration: 300, easing: "cubic-bezier(.34,1.56,.64,1)" }
+        : { duration: ime ? 190 : 165, easing: "cubic-bezier(.16,1,.3,1)" },
     );
     animation.finished.then(
       () => {
-        if (!disposed && token === generation) stop();
+        if (disposed || token !== generation) return;
+        animation = null;
+        if (persistent) resting = true;
+        else stop();
       },
       () => {},
     );
@@ -203,9 +335,11 @@ export function mountCaret(settings) {
       schedule();
     }
   };
-  const end = () => {
+  const end = (e) => {
+    const committed = composing && e?.type === "compositionend" && e.data;
     composing = false;
     compositionEditor = null;
+    if (committed) burst = true;
     schedule();
   };
   // compositionend can be lost (focus jump, input-source switch): recover on
@@ -217,12 +351,19 @@ export function mountCaret(settings) {
     if (composing) end();
     else schedule();
   };
+  const input = (e) => {
+    lastAt = "";
+    if (
+      !e.isComposing &&
+      /^insert(Text|ReplacementText|FromPaste)?$/.test(e.inputType || "") &&
+      e.target.closest?.(SELECTOR)
+    )
+      burst = true;
+    schedule();
+  };
   const events = [
     ["selectionchange", schedule],
-    ["input", () => {
-      lastAt = "";
-      schedule();
-    }],
+    ["input", input],
     ["focusin", schedule],
     ["focusout", leave],
     ["keydown", heal],
@@ -239,6 +380,7 @@ export function mountCaret(settings) {
   return {
     refresh() {
       for (const el of styled.keys()) styleEditor(el);
+      release();
       schedule();
     },
     dispose() {
@@ -253,6 +395,7 @@ export function mountCaret(settings) {
       window.removeEventListener("resize", schedule);
       reduced.removeEventListener("change", schedule);
       layer.remove();
+      fx.remove();
     },
   };
 }

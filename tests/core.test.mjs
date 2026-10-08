@@ -3,7 +3,10 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import {
   DEFAULT_SETTINGS,
+  PRESETS,
+  matchPreset,
   normalizeSettings,
+  presetValues,
   isHexColor,
 } from "../src/settings.js";
 import { markdownEdit, renumberEdit } from "../src/markdown.js";
@@ -25,11 +28,20 @@ const at = (marked, key, shift = false) => {
   const out = apply(text, e);
   return out.slice(0, e.caret) + "|" + out.slice(e.caret);
 };
-test("legacy migration restores fade without inheriting trail/pulse controls", () =>
+test("legacy booleans migrate; unknown/legacy values never inject effects", () => {
   assert.deepEqual(
-    normalizeSettings({ caret: false, lists: false, pulse: true, trail: true }),
-    { ...DEFAULT_SETTINGS, caret: false, lists: false },
-  ));
+    normalizeSettings({ caret: false, fade: false, lists: false, pulse: true, trail: true }),
+    { ...DEFAULT_SETTINGS, motion: "instant", rest: "blink", lists: false },
+  );
+  assert.deepEqual(normalizeSettings({ shape: "star", typing: "<b>" }), DEFAULT_SETTINGS);
+});
+test("every preset round-trips and is recognised", () => {
+  for (const p of PRESETS) {
+    const s = normalizeSettings({ ...DEFAULT_SETTINGS, ...presetValues(p) });
+    assert.equal(matchPreset(s), p.id);
+  }
+  assert.equal(matchPreset(normalizeSettings({ glow: true })), null);
+});
 test("custom color accepts only six-digit hex and normalizes case", () => {
   assert.equal(
     normalizeSettings({ colorMode: "custom", customColor: "#ABCDEF" })
@@ -47,7 +59,7 @@ test("custom color accepts only six-digit hex and normalizes case", () => {
 test("theme is default; invalid persisted settings cannot inject CSS", () => {
   assert.deepEqual(normalizeSettings(null), DEFAULT_SETTINGS);
   assert.deepEqual(
-    normalizeSettings({ caret: "yes", fade: "no", lists: 1 }),
+    normalizeSettings({ caret: "yes", fade: "no", lists: 1, glow: "on" }),
     DEFAULT_SETTINGS,
   );
 });

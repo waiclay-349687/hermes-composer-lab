@@ -1,8 +1,12 @@
 # Send-safety investigation and test boundaries
 
+## 0.5.0: caret effects
+
+Effects the native caret cannot draw (block / underline, glow, breathing, aurora) use one persistent overlay while the native caret is transparent; any untrustworthy position, a non-collapsed selection or reduced motion releases it back to the native caret. Ink trail, ripples and sparks are transient elements on a separate layer, capped at 24 live nodes. Verified in the real app: block / underline / bar overlay aligns to the character box to the pixel and IME commits normally in every mode.
+
 ## 0.4.0: real-composer fixes
 
-Testing inside the real Hermes desktop app (isolated sandbox, mock model, CDP) showed that 0.3.x's line/marker wrapper spans broke caret placement, Backspace and arrow keys, and that whole-list re-serialization rewrote `-` to `*`, `1)` to `1.` and escaped task boxes. 0.4.0 never restructures the host DOM (markers use CSS highlights), edits only leading indentation/markers, pauses (not permanently disables) lists after an error, self-heals a lost `compositionend`, restores focus after the settings dialog, and opens settings from ⌘K on pages without a composer. `npm test` runs 34 checks; the Electron suites run 29. Tab is offered to the host first and only indents when the host leaves it unhandled.
+Testing inside the real Hermes desktop app (isolated sandbox, mock model, CDP) showed that 0.3.x's line/marker wrapper spans broke caret placement, Backspace and arrow keys, and that whole-list re-serialization rewrote `-` to `*`, `1)` to `1.` and escaped task boxes. 0.4.0 never restructures the host DOM (markers use CSS highlights), edits only leading indentation/markers, pauses (not permanently disables) lists after an error, self-heals a lost `compositionend`, restores focus after the settings dialog, and opens settings from ⌘K on pages without a composer. `npm test` runs 35 checks; the Electron suites run 31. Tab is offered to the host first and only indents when the host leaves it unhandled.
 
 Auto renumbering only runs after a deletion / cut / paste / drop that changed the line count, with a collapsed caret in the focused editor, and never while the caret is inside an ordered number. Managed editors get `white-space: pre-wrap` so a list marker's trailing space survives in the edit-message composer.
 
