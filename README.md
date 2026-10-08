@@ -18,7 +18,7 @@ MIT licensed, local-only, no telemetry, no core patches or application rebuilds.
 | --------------- | --------------------------------------------- |
 | Enter           | 宿主发送；输入法候选确认优先                  |
 | Shift+Enter     | 换行；列表内续项，空项退出                    |
-| Tab / Shift+Tab | 仅列表行缩进 / 退级；普通文本和补全菜单不抢占 |
+| Tab / Shift+Tab | 仅列表行缩进 / 退级；最外层 Shift+Tab 不做任何事；补全菜单优先 |
 | Backspace       | 紧跟在列表符号后时退级 / 去掉符号；其余位置为普通删除 |
 | ⌘ Backspace     | 列表行内删除正文、保留符号；折行时保持系统行为 |
 | 设置试写区      | Enter 也只换行，不发送消息                    |

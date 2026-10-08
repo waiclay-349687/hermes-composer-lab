@@ -17346,6 +17346,8 @@ function usesTabIndent(text, row) {
 function structuralEdit(text, doc2, row, offset, key, shift2) {
   if (usesTabIndent(text, row))
     return key === "Tab" ? { changes: [], caret: offset } : null;
+  if (key === "Tab" && shift2 && row.item.parent.parent?.name !== "ListItem")
+    return { changes: [], caret: offset };
   if (key === "Tab")
     return shift2 ? lift(text, doc2, row, offset) : sink(text, doc2, row, offset);
   if (key === "Backspace") return lift(text, doc2, row, offset);

@@ -122,9 +122,13 @@ fs.mkdirSync(scratch, { recursive: true });
         assert.equal(await read(), "- [] todo");
       },
     );
-    await check("top-level Shift+Tab removes prefix cleanly", async () => {
+    await check("top-level Shift+Tab keeps the marker; Backspace removes it", async () => {
       await set("1. content");
       await key("Shift+Tab");
+      assert.equal(await read(), "1. content");
+      assert.equal(await page.evaluate(() => document.activeElement.id), "editor");
+      await page.evaluate(() => fixture.caretAt(3));
+      await key("Backspace");
       assert.equal(await read(), "content");
     });
     await check("undo/redo recover nested list transaction", async () => {

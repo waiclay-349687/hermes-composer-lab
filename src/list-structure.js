@@ -239,6 +239,11 @@ function usesTabIndent(text, row) {
 export function structuralEdit(text, doc, row, offset, key, shift) {
   if (usesTabIndent(text, row))
     return key === "Tab" ? { changes: [], caret: offset } : null;
+  // Shift+Tab on a top-level item is consumed as a no-op (like Notion / Docs /
+  // Obsidian): pressing it once too often never strips the marker. Removing the
+  // marker is Backspace's job.
+  if (key === "Tab" && shift && row.item.parent.parent?.name !== "ListItem")
+    return { changes: [], caret: offset };
   if (key === "Tab")
     return shift ? lift(text, doc, row, offset) : sink(text, doc, row, offset);
   if (key === "Backspace") return lift(text, doc, row, offset);

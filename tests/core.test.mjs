@@ -63,8 +63,10 @@ test("Tab never intercepts ordinary prose", () => {
   assert.equal(edit("hello", "Tab"), null);
   assert.equal(edit("hello", "Tab", true), null);
 });
-test("top-level unindent removes markup and whitespace", () =>
-  assert.equal(edit("1. hello", "Tab", true), "hello"));
+test("top-level Shift+Tab is a consumed no-op; Backspace removes the marker", () => {
+  assert.deepEqual(markdownEdit("1. hello", 8, "Tab", true).changes, []);
+  assert.equal(at("1. |hello", "Backspace"), "|hello");
+});
 test("runtime source has no direct submit, networking, timers or synthetic keys", () => {
   for (const file of fs.readdirSync("src").filter((f) => f.endsWith(".js"))) {
     const s = fs.readFileSync("src/" + file, "utf8");
@@ -106,9 +108,9 @@ test("Shift+Tab lifts nested item after its parent and renumbers", () => {
   assert.equal(at("1. a\n   1. b|\n2. c", "Tab", true), "1. a\n2. b|\n3. c");
   assert.equal(at("- a\n  - b|\n  - c", "Tab", true), "- a\n- b|\n  - c");
 });
-test("Shift+Tab on top-level item removes only its prefix", () => {
-  assert.equal(at("- a\n- b|", "Tab", true), "- a\nb|");
-  assert.equal(at("1) a\n2) b|\n3) c", "Tab", true), "1) a\nb|\n2) c");
+test("Backspace at a top-level marker removes only its prefix", () => {
+  assert.equal(at("- a\n- |b", "Backspace"), "- a\n|b");
+  assert.equal(at("1) a\n2) |b\n3) c", "Backspace"), "1) a\n|b\n2) c");
 });
 test("Backspace right after the marker removes it; no blank lines or marker rewrites", () => {
   assert.equal(at("- a\n- |", "Backspace"), "- a\n|");
