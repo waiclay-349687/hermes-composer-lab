@@ -161,6 +161,21 @@ export function applyEdit(editor, edit) {
       inputType: "insertFromPaste",
     }),
   );
+  try {
+    applyChanges(editor, edit);
+  } finally {
+    // Even if a change failed half-way, keep the host draft equal to the DOM
+    // (the undo point above lets ⌘Z restore the previous text).
+    editor.dispatchEvent(
+      new InputEvent("input", {
+        bubbles: true,
+        inputType: "insertText",
+        data: null,
+      }),
+    );
+  }
+}
+function applyChanges(editor, edit) {
   for (const change of [...edit.changes].reverse()) {
     const r = document.createRange();
     r.setStart(...pointAt(editor, change.start));
@@ -187,21 +202,26 @@ export function applyEdit(editor, edit) {
     getSelection().addRange(r);
   } else selectOffset(editor, edit.caret);
   revealCaret(editor);
-  editor.dispatchEvent(
-    new InputEvent("input", {
-      bubbles: true,
-      inputType: "insertText",
-      data: null,
-    }),
-  );
 }
 // Client rect of a collapsed caret, including element positions (after a
 // <br> or chip) where Chromium reports no box. null when unknowable.
 export function caretRect(range) {
-  const q = range.getClientRects()[0];
-  if (q?.height) return { left: q.left, top: q.top, bottom: q.bottom, height: q.height };
   const n = range.startContainer,
     o = range.startOffset;
+  const q = range.getClientRects()[0];
+  if (q?.height) {
+    // At a soft-wrap point Chromium reports the upstream (previous line) box
+    // while the visible caret sits at the start of the next line.
+    if (n.nodeType === 3 && o < n.length) {
+      const next = document.createRange();
+      next.setStart(n, o);
+      next.setEnd(n, o + 1);
+      const b = next.getClientRects()[0];
+      if (b?.height && b.top - q.top >= q.height / 2)
+        return { left: b.left, top: b.top, bottom: b.bottom, height: b.height };
+    }
+    return { left: q.left, top: q.top, bottom: q.bottom, height: q.height };
+  }
   if (n.nodeType === 3) {
     if (!n.length) return null;
     const probe = document.createRange();
@@ -254,17 +274,9 @@ function completionOpen(editor) {
   const root =
     editor.closest('[data-slot="composer-root"],[data-slot="aui_edit-composer-root"]') ||
     document;
-  return !!(
-    document.querySelector(
-      '[data-slot="composer-completion-drawer"],[data-slot="composer-trigger-popover"]',
-    ) || root.querySelector('[role="listbox"]')
+  return !!root.querySelector(
+    '[data-slot="composer-completion-drawer"],[data-slot="composer-trigger-popover"],[role="listbox"]',
   );
-}
-// The host consumes Tab for "@path" descent and for committing a typed
-// "/command arg" even before (or without) a visible drawer.
-export function triggerTokenBeforeCaret(text, offset) {
-  const line = text.slice(text.lastIndexOf("\n", offset - 1) + 1, offset);
-  return /(?:^|\s)[@/]\S*$/.test(line) || /^\s*(?:[-+*]|\d+[.)])\s+\/\S+\s/.test(line);
 }
 // Does the caret sit on the same visual line as text offset `at`?
 function sameVisualLine(editor, at) {
@@ -276,8 +288,17 @@ function sameVisualLine(editor, at) {
   const there = caretRect(r);
   return !!(here && there && Math.abs(here.top - there.top) < Math.min(here.height, there.height) / 2);
 }
+const lateTab = new WeakMap();
 export function mountLists({ enabled, onError }) {
   const states = new Map();
+  const late = (e) => {
+    const handler = lateTab.get(e);
+    if (!handler || e.defaultPrevented) return;
+    lateTab.delete(e);
+    e.__clLate = true;
+    handler(e);
+  };
+  window.addEventListener("keydown", late);
   const canHighlight =
     typeof Highlight === "function" && !!globalThis.CSS?.highlights;
   function paint() {
@@ -358,7 +379,13 @@ export function mountLists({ enabled, onError }) {
         // An editor holding only its placeholder <br> serializes as "" while a
         // caret after that <br> measures 1: clamp so they always agree.
         offset = Math.min(before.length, text.length);
-      if (e.key === "Tab" && triggerTokenBeforeCaret(text, offset)) return;
+      if (e.key === "Tab" && !e.__clLate) {
+        // Tab goes to the host first (it owns @path descent, /command commit,
+        // emoji and completion picks, even before a drawer is visible). If the
+        // host leaves it unhandled, the window-level listener indents.
+        lateTab.set(e, key);
+        return;
+      }
       let edit = null;
       try {
         if (e.metaKey) {
@@ -442,6 +469,7 @@ export function mountLists({ enabled, onError }) {
       for (const s of states.values()) s.schedule();
     },
     dispose() {
+      window.removeEventListener("keydown", late);
       rootObserver.disconnect();
       cancelAnimationFrame(scanFrame);
       for (const s of states.values()) s.dispose();

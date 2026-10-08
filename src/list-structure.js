@@ -174,9 +174,26 @@ function lift(text, doc, row, offset) {
   if (parentItem?.name !== "ListItem") {
     // Top level: drop the marker; the line becomes plain text.
     changes.push({ start: row.from, end: row.to, insert: "" });
-    if (list.name === "OrderedList") {
+    if (idx === 0) {
+      // The item's own lines/children move out with it, so they do not end up
+      // as an indented orphan block under a plain paragraph.
+      shiftTail(text, row.item, -(row.contentFrom - row.from), changes);
+      if (list.name === "OrderedList") {
+        // The next item now follows a paragraph (or the item's former child
+        // list): only "1." may interrupt a paragraph, so restart there unless
+        // it continues an ordered child list.
+        const own = childList(row.item),
+          ownRows =
+            own?.name === "OrderedList"
+              ? listItems(own).map((i) => markerInfo(i, doc)).filter(Boolean)
+              : [];
+        const start = ownRows.length ? (ownRows.at(-1).number ?? 0) + 1 : 1;
+        renumber(text, items.slice(1), doc, start, changes);
+      }
+    } else if (list.name === "OrderedList") {
+      // A middle item becomes a lazy continuation of the previous item.
       const first = markerInfo(items[0], doc)?.number ?? 1;
-      renumber(text, items.slice(idx + 1), doc, idx === 0 ? first : first + idx, changes);
+      renumber(text, items.slice(idx + 1), doc, first + idx, changes);
     }
     return finish(changes, Math.max(offset, row.to));
   }

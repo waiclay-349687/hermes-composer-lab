@@ -156,3 +156,9 @@ test("tab-indented lists are never rewritten", () => {
   assert.deepEqual(markdownEdit("- a\n\t- b", 7, "Tab", true).changes, []);
   assert.equal(markdownEdit("- a\n\t- b", 7, "Backspace", false), null);
 });
+
+test("removing the first marker keeps the next items a list", () => {
+  assert.equal(at("3. |a\n4. b", "Backspace"), "|a\n1. b");
+  assert.equal(at("1. |a\n   1. x\n2. b", "Backspace"), "|a\n1. x\n2. b");
+  assert.equal(at("- |a\n  - x\n- b", "Backspace"), "|a\n- x\n- b");
+});

@@ -24,14 +24,8 @@ function stateFor(text, offset = 0, unit = "  ") {
     ensureSyntaxTree(cachedState, text.length, 50);
   }
   if (!offset) return cachedState;
-  // Configure indentation on the command state, not on any host editor.
-  const state = EditorState.create({
-    doc: cachedState.doc,
-    selection: { anchor: offset },
-    extensions: [markdownLanguage, indentUnit.of(unit), LF],
-  });
-  ensureSyntaxTree(state, text.length, 50);
-  return state;
+  // Selection-only transaction: reuses the already-parsed syntax tree.
+  return cachedState.update({ selection: { anchor: offset } }).state;
 }
 export function listRows(text) {
   const state = stateFor(text),

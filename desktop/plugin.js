@@ -17305,9 +17305,16 @@ function lift(text, doc2, row, offset) {
   const list = row.item.parent, parentItem = list.parent, items = listItems(list), idx = items.findIndex((i2) => sameNode(i2, row.item)), changes = [];
   if (parentItem?.name !== "ListItem") {
     changes.push({ start: row.from, end: row.to, insert: "" });
-    if (list.name === "OrderedList") {
+    if (idx === 0) {
+      shiftTail(text, row.item, -(row.contentFrom - row.from), changes);
+      if (list.name === "OrderedList") {
+        const own = childList(row.item), ownRows = own?.name === "OrderedList" ? listItems(own).map((i2) => markerInfo(i2, doc2)).filter(Boolean) : [];
+        const start = ownRows.length ? (ownRows.at(-1).number ?? 0) + 1 : 1;
+        renumber(text, items.slice(1), doc2, start, changes);
+      }
+    } else if (list.name === "OrderedList") {
       const first = markerInfo(items[0], doc2)?.number ?? 1;
-      renumber(text, items.slice(idx + 1), doc2, idx === 0 ? first : first + idx, changes);
+      renumber(text, items.slice(idx + 1), doc2, first + idx, changes);
     }
     return finish(changes, Math.max(offset, row.to));
   }
@@ -17362,13 +17369,7 @@ function stateFor(text, offset = 0, unit = "  ") {
     ensureSyntaxTree(cachedState, text.length, 50);
   }
   if (!offset) return cachedState;
-  const state = EditorState.create({
-    doc: cachedState.doc,
-    selection: { anchor: offset },
-    extensions: [markdownLanguage, indentUnit.of(unit), LF]
-  });
-  ensureSyntaxTree(state, text.length, 50);
-  return state;
+  return cachedState.update({ selection: { anchor: offset } }).state;
 }
 function listRows(text) {
   const state = stateFor(text), rows = [];
@@ -17551,6 +17552,19 @@ function applyEdit(editor, edit) {
       inputType: "insertFromPaste"
     })
   );
+  try {
+    applyChanges(editor, edit);
+  } finally {
+    editor.dispatchEvent(
+      new InputEvent("input", {
+        bubbles: true,
+        inputType: "insertText",
+        data: null
+      })
+    );
+  }
+}
+function applyChanges(editor, edit) {
   for (const change of [...edit.changes].reverse()) {
     const r = document.createRange();
     r.setStart(...pointAt(editor, change.start));
@@ -17574,18 +17588,21 @@ function applyEdit(editor, edit) {
     getSelection().addRange(r);
   } else selectOffset(editor, edit.caret);
   revealCaret(editor);
-  editor.dispatchEvent(
-    new InputEvent("input", {
-      bubbles: true,
-      inputType: "insertText",
-      data: null
-    })
-  );
 }
 function caretRect(range) {
-  const q = range.getClientRects()[0];
-  if (q?.height) return { left: q.left, top: q.top, bottom: q.bottom, height: q.height };
   const n = range.startContainer, o = range.startOffset;
+  const q = range.getClientRects()[0];
+  if (q?.height) {
+    if (n.nodeType === 3 && o < n.length) {
+      const next = document.createRange();
+      next.setStart(n, o);
+      next.setEnd(n, o + 1);
+      const b = next.getClientRects()[0];
+      if (b?.height && b.top - q.top >= q.height / 2)
+        return { left: b.left, top: b.top, bottom: b.bottom, height: b.height };
+    }
+    return { left: q.left, top: q.top, bottom: q.bottom, height: q.height };
+  }
   if (n.nodeType === 3) {
     if (!n.length) return null;
     const probe = document.createRange();
@@ -17628,13 +17645,9 @@ function revealCaret(editor) {
 function completionOpen(editor) {
   if (editor.getAttribute("aria-expanded") === "true") return true;
   const root = editor.closest('[data-slot="composer-root"],[data-slot="aui_edit-composer-root"]') || document;
-  return !!(document.querySelector(
-    '[data-slot="composer-completion-drawer"],[data-slot="composer-trigger-popover"]'
-  ) || root.querySelector('[role="listbox"]'));
-}
-function triggerTokenBeforeCaret(text, offset) {
-  const line = text.slice(text.lastIndexOf("\n", offset - 1) + 1, offset);
-  return /(?:^|\s)[@/]\S*$/.test(line) || /^\s*(?:[-+*]|\d+[.)])\s+\/\S+\s/.test(line);
+  return !!root.querySelector(
+    '[data-slot="composer-completion-drawer"],[data-slot="composer-trigger-popover"],[role="listbox"]'
+  );
 }
 function sameVisualLine(editor, at) {
   const s = getSelection();
@@ -17644,8 +17657,17 @@ function sameVisualLine(editor, at) {
   const there = caretRect(r);
   return !!(here && there && Math.abs(here.top - there.top) < Math.min(here.height, there.height) / 2);
 }
+var lateTab = /* @__PURE__ */ new WeakMap();
 function mountLists({ enabled, onError }) {
   const states = /* @__PURE__ */ new Map();
+  const late = (e) => {
+    const handler = lateTab.get(e);
+    if (!handler || e.defaultPrevented) return;
+    lateTab.delete(e);
+    e.__clLate = true;
+    handler(e);
+  };
+  window.addEventListener("keydown", late);
   const canHighlight = typeof Highlight === "function" && !!globalThis.CSS?.highlights;
   function paint() {
     if (!canHighlight) return;
@@ -17705,7 +17727,10 @@ function mountLists({ enabled, onError }) {
       const before = caretOffset(editor);
       if (before == null) return;
       const text = textOf(editor), offset = Math.min(before.length, text.length);
-      if (e.key === "Tab" && triggerTokenBeforeCaret(text, offset)) return;
+      if (e.key === "Tab" && !e.__clLate) {
+        lateTab.set(e, key);
+        return;
+      }
       let edit = null;
       try {
         if (e.metaKey) {
@@ -17785,6 +17810,7 @@ function mountLists({ enabled, onError }) {
       for (const s of states.values()) s.schedule();
     },
     dispose() {
+      window.removeEventListener("keydown", late);
       rootObserver.disconnect();
       cancelAnimationFrame(scanFrame);
       for (const s of states.values()) s.dispose();

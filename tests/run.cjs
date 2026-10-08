@@ -280,15 +280,23 @@ fs.mkdirSync(scratch, { recursive: true });
       assert.deepEqual(prevented, [false, true]);
       assert.equal(await read(), "- a\n- ");
     });
-    await check("Tab after a typed @path or /command is left to the host", async () => {
+    await check("Tab goes to the host first; indents only when the host leaves it", async () => {
       await set("- a\n- @fil");
-      const prevented = await page.evaluate(() => {
+      const hostTook = await page.evaluate(() => {
+        const ed = document.getElementById("editor"),
+          host = (e) => e.key === "Tab" && e.preventDefault();
+        ed.addEventListener("keydown", host);
         const e = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
-        document.getElementById("editor").dispatchEvent(e);
+        ed.dispatchEvent(e);
+        ed.removeEventListener("keydown", host);
         return e.defaultPrevented;
       });
-      assert.equal(prevented, false);
+      assert.equal(hostTook, true);
       assert.equal(await read(), "- a\n- @fil");
+      await set("- a\n- see /usr/x");
+      await key("Tab");
+      assert.equal(await read(), "- a\n  - see /usr/x");
+      assert.equal(await page.evaluate(() => document.activeElement.id), "editor");
     });
     await check(
       "disposal restores native source without changing text or focus",
