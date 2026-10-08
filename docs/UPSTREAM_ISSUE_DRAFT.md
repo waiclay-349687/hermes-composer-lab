@@ -1,53 +1,39 @@
-## [Feature]: Desktop plugin SDK — key + transaction hooks for the composer editor (selection-aware edits, undo point, decorations)
+### Summary
 
-### Problem
+I'd like to ask whether the Desktop plugin SDK could offer a small, supported way for plugins to make **selection-aware edits in the composer**. I may well be missing an existing path, so corrections are very welcome.
 
-`host.composer` (`getDraft` / `setDraft` / `insertText` / `focus`) covers whole-draft writes and inserts, but it cannot support editor-level features such as Markdown list editing, where Shift+Enter continues a list, Tab nests an item, Backspace at a marker outdents it, and ordered lists are renumbered. Those features need:
+### Context
 
-1. **The caret / selection as a text offset** in the serialized draft (the `composerPlainText` coordinate space, with chips counted as their `@kind:value` text).
-2. **A keydown hook that runs before the host's own handling**, can claim a key with `preventDefault`, and otherwise falls through to the host. Completion, IME, Enter-to-send and undo stay core-owned. The hook should be skipped automatically while composing, or while a completion drawer is open.
-3. **An atomic edit transaction.** Something like `applyEdit({ changes: [{ from, to, insert }], selection })` that:
-   - records one undo point,
-   - re-renders chips and line breaks the way `renderComposerContents` does,
-   - syncs the draft,
-   - and reveals the caret (`revealCaret`).
-4. **Decorations / marks over text ranges.** For example, colouring list markers without touching the DOM: a supported wrapper around the CSS Custom Highlight API, keyed by text offsets.
+I maintain a small community desktop plugin. It is unofficial and not in the catalog, and it adds Markdown list editing to the composer: Shift+Enter continues a list, Tab and Shift+Tab nest and un-nest items, Backspace at a marker outdents, and ordered lists stay numbered.
 
-### Why
+`host.composer` (`getDraft` / `setDraft` / `insertText` / `focus`) works well for whole-draft writes and inserts. As far as I can tell, though, it doesn't yet cover edits that depend on the caret position. So the plugin currently has to work directly against `[data-slot="composer-rich-input"]`:
 
-Without these hooks, plugins reach into `[data-slot="composer-rich-input"]` directly. In practice that means:
+- capture-phase key listeners
+- its own copy of the serializer's offset mapping
+- synthetic `textInput` / `input` events to reach the undo and draft paths
+- DOM ranges for styling
 
-- capture-phase key listeners,
-- `textOf` / `pointAt` re-implementations of the serializer,
-- synthetic `textInput` / `input` events to hit the undo and draft paths,
-- and DOM ranges for styling.
+That works today, but it is fragile, and I'm aware it goes against the spirit of catalog rule 8 ("request missing SDK hooks rather than patch around them"), which is why I'm asking. A few things we ran into while testing against the real app:
 
-This breaks easily. A community plugin ("Composer Lab") that wrapped lines in spans broke caret placement, arrow keys and Backspace in the real composer, and rewrote markdown, even though it passed isolated fixture tests. After a rewrite, it still has to:
+- An earlier version wrapped lines in spans. That broke caret placement and Backspace, even though isolated fixture tests passed.
+- The plugin has to defer Tab to the host so it doesn't steal `@` / `/` completion.
+- It has to guard IME composition state.
+- The edit-message composer doesn't use `white-space: pre-wrap`, so a list marker's trailing space was collapsed. The plugin currently forces pre-wrap there, which we'd rather not do from a plugin.
 
-- mirror the host's completion and Tab precedence,
-- guard IME state that can go stale,
-- force `white-space: pre-wrap` on the edit-message composer, which lacks it, so a marker's trailing space survives,
-- and re-check every daily release.
+### Possible shape (just a sketch — happy to defer to whatever fits the codebase)
 
-Catalog rule 8 already tells authors to request missing SDK hooks rather than patch around them. This is that request.
-
-### Proposal (minimal)
+1. **Read the selection** as offsets in the serialized draft, the same coordinate space as `composerPlainText`, with chips counted as their `@kind:value` text.
+2. **A key hook** that core calls only when it isn't composing and no completion drawer is open, after its own trigger handling. Returning `null` falls through unchanged.
+3. **One undoable transaction**, e.g. `{ changes: [{ from, to, insert }], selection }`, applied the way `renderComposerContents` does. It would record one undo point, sync the draft and reveal the caret.
+4. Optionally, **lightweight text-range decorations**, for example via the CSS Custom Highlight API, so plugins can style text without mutating the editor DOM.
 
 ```ts
-host.composer.onKey(handler: (ctx: {
-  key: string; shift: boolean; meta: boolean; alt: boolean; ctrl: boolean
-  text: string            // serialized draft
-  selection: { anchor: number; head: number }
-  surface: 'main' | 'edit'
-}) => null | { changes: { from: number; to: number; insert: string }[]; selection?: number }): Dispose
-
-host.composer.decorate(ranges: { from: number; to: number; className: string }[], surface?): Dispose
+host.composer.onKey((ctx) => null | { changes: { from: number; to: number; insert: string }[]; selection?: number })
 ```
 
-- The host calls `onKey` handlers only when not composing and no completion drawer is open, after its own completion/trigger handling and before native defaults.
-- A non-null result is applied as a single undoable transaction.
+Prior art: CodeMirror keymaps plus transactions; VS Code `TextEditor.edit` plus decorations.
 
-### Prior art
+I understand this may not fit the roadmap, or that core may prefer to keep editing behaviour internal. In that case, any guidance on the recommended approach would be much appreciated. Thanks for the great SDK!
 
-- CodeMirror `keymap` + `EditorView.dispatch(transaction)`
-- VS Code `TextEditor.edit` + `TextEditorDecorationType`
+---
+Filed as https://github.com/NousResearch/hermes-agent/issues/135074
