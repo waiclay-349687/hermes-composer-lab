@@ -258,7 +258,7 @@ fs.mkdirSync(scratch, { recursive: true });
           if (!a) return null;
           a.pause();
           const out = [];
-          for (const t of [0, 300, 600]) {
+          for (const t of [0, 660, 840]) {
             a.currentTime = t;
             await new Promise(requestAnimationFrame);
             out.push({

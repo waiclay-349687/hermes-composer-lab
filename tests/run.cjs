@@ -267,7 +267,17 @@ fs.mkdirSync(scratch, { recursive: true });
       await page.evaluate(() =>
         document.getElementById("editor").dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true })),
       );
-      await key("Shift+Enter");
+      const prevented = await page.evaluate(() => {
+        const ed = document.getElementById("editor"),
+          fire = () => {
+            const e = new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true, cancelable: true });
+            ed.dispatchEvent(e);
+            return e.defaultPrevented;
+          };
+        return [fire(), fire()];
+      });
+      // First key is left to the host's own recovery, the next one works again.
+      assert.deepEqual(prevented, [false, true]);
       assert.equal(await read(), "- a\n- ");
     });
     await check("Tab after a typed @path or /command is left to the host", async () => {

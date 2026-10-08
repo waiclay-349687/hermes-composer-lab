@@ -78,18 +78,22 @@ function childList(item) {
     if (LIST_NODES.has(c.name)) last = c;
   return last;
 }
-function setNumber(info, n, changes) {
+// Replace an ordered item's number, keeping zero padding ("03." -> "02."). A
+// width change ("9." -> "10.") shifts the item's continuation lines and
+// children by the same amount so they stay attached to it.
+function setNumber(text, info, n, changes) {
   if (info?.number == null || info.number === n) return;
-  changes.push({
-    start: info.markFrom,
-    end: info.markFrom + String(info.number).length,
-    insert: String(n),
-  });
+  const end = info.markTo - info.delim.length,
+    old = text.slice(info.markFrom, end),
+    next = old.startsWith("0") ? String(n).padStart(old.length, "0") : String(n);
+  if (next === old) return;
+  changes.push({ start: info.markFrom, end, insert: next });
+  shiftTail(text, info.item, next.length - old.length, changes);
 }
 // Renumber `items` (ordered list members) sequentially from `start`.
-function renumber(items, doc, start, changes) {
+function renumber(text, items, doc, start, changes) {
   let n = start;
-  for (const item of items) setNumber(markerInfo(item, doc), n++, changes);
+  for (const item of items) setNumber(text, markerInfo(item, doc), n++, changes);
 }
 
 export function mapPos(changes, pos) {
@@ -156,7 +160,7 @@ function sink(text, doc, row, offset) {
   shiftTail(text, row.item, relabel(row, indent, label, changes), changes);
   if (list.name === "OrderedList") {
     const rest = items.filter((_, i) => i !== idx);
-    renumber(rest, doc, markerInfo(items[0], doc)?.number ?? 1, changes);
+    renumber(text, rest, doc, markerInfo(items[0], doc)?.number ?? 1, changes);
   }
   return finish(changes, Math.max(offset, row.to));
 }
@@ -172,7 +176,7 @@ function lift(text, doc, row, offset) {
     changes.push({ start: row.from, end: row.to, insert: "" });
     if (list.name === "OrderedList") {
       const first = markerInfo(items[0], doc)?.number ?? 1;
-      renumber(items.slice(idx + 1), doc, idx === 0 ? first : first + idx, changes);
+      renumber(text, items.slice(idx + 1), doc, idx === 0 ? first : first + idx, changes);
     }
     return finish(changes, Math.max(offset, row.to));
   }
@@ -189,16 +193,35 @@ function lift(text, doc, row, offset) {
   if (pad > 0)
     for (const item of later)
       for (const s of itemLineStarts(text, item)) shiftLine(text, s, pad, changes);
-  if (list.name === "OrderedList") renumber(later, doc, 1, changes);
+  if (list.name === "OrderedList" && later.length) {
+    // Later siblings join the lifted item's own child list (if any): continue
+    // its numbering instead of restarting at 1.
+    const own = childList(row.item),
+      ownRows = own?.name === "OrderedList"
+        ? listItems(own).map((i) => markerInfo(i, doc)).filter(Boolean)
+        : [];
+    const start = ownRows.length ? (ownRows.at(-1).number ?? 0) + 1 : 1;
+    renumber(text, later, doc, start, changes);
+  }
   if (outer?.name === "OrderedList" && parent.number !== null) {
     const outerItems = listItems(outer),
       at = outerItems.findIndex((i) => sameNode(i, parentItem));
-    renumber(outerItems.slice(at + 1), doc, parent.number + 2, changes);
+    renumber(text, outerItems.slice(at + 1), doc, parent.number + 2, changes);
   }
   return finish(changes, Math.max(offset, row.to));
 }
 
+// Markdown measures indentation in columns (a tab = up to 4). Prefix edits here
+// count characters, so a list that uses tab indentation is left alone: Tab is
+// consumed as a no-op (focus must not leave the composer), Backspace is native.
+function usesTabIndent(text, row) {
+  let top = row.item.parent;
+  while (top.parent?.name === "ListItem") top = top.parent.parent;
+  return /(^|\n)[ ]*\t/.test(text.slice(lineStart(text, top.from), top.to));
+}
 export function structuralEdit(text, doc, row, offset, key, shift) {
+  if (usesTabIndent(text, row))
+    return key === "Tab" ? { changes: [], caret: offset } : null;
   if (key === "Tab")
     return shift ? lift(text, doc, row, offset) : sink(text, doc, row, offset);
   if (key === "Backspace") return lift(text, doc, row, offset);

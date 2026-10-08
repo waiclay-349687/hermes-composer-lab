@@ -15,7 +15,7 @@ import {
   host
 } from "@hermes/plugin-sdk";
 import { jsx, jsxs } from "react/jsx-runtime";
-import { useId, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 
 // node_modules/@marijn/find-cluster-break/src/index.js
 var rangeFrom = [];
@@ -17235,17 +17235,16 @@ function childList(item) {
     if (LIST_NODES.has(c.name)) last = c;
   return last;
 }
-function setNumber(info, n, changes) {
+function setNumber(text, info, n, changes) {
   if (info?.number == null || info.number === n) return;
-  changes.push({
-    start: info.markFrom,
-    end: info.markFrom + String(info.number).length,
-    insert: String(n)
-  });
+  const end = info.markTo - info.delim.length, old = text.slice(info.markFrom, end), next = old.startsWith("0") ? String(n).padStart(old.length, "0") : String(n);
+  if (next === old) return;
+  changes.push({ start: info.markFrom, end, insert: next });
+  shiftTail(text, info.item, next.length - old.length, changes);
 }
-function renumber(items, doc2, start, changes) {
+function renumber(text, items, doc2, start, changes) {
   let n = start;
-  for (const item of items) setNumber(markerInfo(item, doc2), n++, changes);
+  for (const item of items) setNumber(text, markerInfo(item, doc2), n++, changes);
 }
 function mapPos(changes, pos) {
   let delta = 0;
@@ -17298,7 +17297,7 @@ function sink(text, doc2, row, offset) {
   shiftTail(text, row.item, relabel(row, indent, label, changes), changes);
   if (list.name === "OrderedList") {
     const rest = items.filter((_, i2) => i2 !== idx);
-    renumber(rest, doc2, markerInfo(items[0], doc2)?.number ?? 1, changes);
+    renumber(text, rest, doc2, markerInfo(items[0], doc2)?.number ?? 1, changes);
   }
   return finish(changes, Math.max(offset, row.to));
 }
@@ -17308,7 +17307,7 @@ function lift(text, doc2, row, offset) {
     changes.push({ start: row.from, end: row.to, insert: "" });
     if (list.name === "OrderedList") {
       const first = markerInfo(items[0], doc2)?.number ?? 1;
-      renumber(items.slice(idx + 1), doc2, idx === 0 ? first : first + idx, changes);
+      renumber(text, items.slice(idx + 1), doc2, idx === 0 ? first : first + idx, changes);
     }
     return finish(changes, Math.max(offset, row.to));
   }
@@ -17321,14 +17320,25 @@ function lift(text, doc2, row, offset) {
   if (pad > 0)
     for (const item of later)
       for (const s of itemLineStarts(text, item)) shiftLine(text, s, pad, changes);
-  if (list.name === "OrderedList") renumber(later, doc2, 1, changes);
+  if (list.name === "OrderedList" && later.length) {
+    const own = childList(row.item), ownRows = own?.name === "OrderedList" ? listItems(own).map((i2) => markerInfo(i2, doc2)).filter(Boolean) : [];
+    const start = ownRows.length ? (ownRows.at(-1).number ?? 0) + 1 : 1;
+    renumber(text, later, doc2, start, changes);
+  }
   if (outer?.name === "OrderedList" && parent.number !== null) {
     const outerItems = listItems(outer), at = outerItems.findIndex((i2) => sameNode(i2, parentItem));
-    renumber(outerItems.slice(at + 1), doc2, parent.number + 2, changes);
+    renumber(text, outerItems.slice(at + 1), doc2, parent.number + 2, changes);
   }
   return finish(changes, Math.max(offset, row.to));
 }
+function usesTabIndent(text, row) {
+  let top2 = row.item.parent;
+  while (top2.parent?.name === "ListItem") top2 = top2.parent.parent;
+  return /(^|\n)[ ]*\t/.test(text.slice(lineStart(text, top2.from), top2.to));
+}
 function structuralEdit(text, doc2, row, offset, key, shift2) {
+  if (usesTabIndent(text, row))
+    return key === "Tab" ? { changes: [], caret: offset } : null;
   if (key === "Tab")
     return shift2 ? lift(text, doc2, row, offset) : sink(text, doc2, row, offset);
   if (key === "Backspace") return lift(text, doc2, row, offset);
@@ -17681,6 +17691,7 @@ function mountLists({ enabled, onError }) {
       if (st.composing && !e.isComposing && e.keyCode !== 229) {
         st.composing = false;
         schedule();
+        return;
       }
       if (!["Enter", "Tab", "Backspace"].includes(e.key) || e.key === "Enter" && !e.shiftKey)
         return;
@@ -18140,10 +18151,25 @@ var plugin_default = {
         (b) => b.offsetParent !== null && b.getAttribute("data-cl-settings-owner") !== HEADLESS
       );
       opened = owner || visible?.getAttribute("data-cl-settings-owner") || HEADLESS;
+      if (opened === HEADLESS && !headlessMounted) {
+        opened = null;
+        host.notify({
+          kind: "info",
+          message: "\u8F93\u5165\u5B9E\u9A8C\u5BA4\uFF1A\u8BF7\u5148\u56DE\u5230\u5BF9\u8BDD\u9875\u6216\u5173\u95ED\u5F53\u524D\u8BBE\u7F6E\u9875\uFF0C\u518D\u6253\u5F00\u8BBE\u7F6E\u3002"
+        });
+      }
       signal();
     }
+    let headlessMounted = 0;
     function UI({ headless = false }) {
       const id = useId(), owner = headless ? HEADLESS : id;
+      useEffect(() => {
+        if (!headless) return;
+        headlessMounted++;
+        return () => {
+          headlessMounted--;
+        };
+      }, [headless]);
       useSyncExternalStore(
         (fn) => {
           subscribers.add(fn);
@@ -18462,10 +18488,10 @@ var plugin_default = {
       order: 80,
       render: () => jsx(UI, {})
     });
-    if (TITLEBAR_AREAS?.right)
+    if (TITLEBAR_AREAS?.center)
       ctx.register({
         id: "dialog-host",
-        area: TITLEBAR_AREAS.right,
+        area: TITLEBAR_AREAS.center,
         order: 9999,
         render: () => jsx(UI, { headless: true })
       });

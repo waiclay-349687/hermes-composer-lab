@@ -326,9 +326,12 @@ export function mountLists({ enabled, onError }) {
     const key = (e) => {
       // Self-heal a composition flag whose compositionend never arrived
       // (focus jump / input-source switch), exactly like the host does.
+      // This key itself goes to the host untouched so the host can run its own
+      // recovery (undo point + draft sync would otherwise be skipped).
       if (st.composing && !e.isComposing && e.keyCode !== 229) {
         st.composing = false;
         schedule();
+        return;
       }
       if (
         !["Enter", "Tab", "Backspace"].includes(e.key) ||

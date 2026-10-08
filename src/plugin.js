@@ -14,7 +14,7 @@ import {
   host,
 } from "@hermes/plugin-sdk";
 import { jsx, jsxs } from "react/jsx-runtime";
-import { useId, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import { mountLists, textOf, SELECTOR } from "./editor.js";
 import { mountCaret } from "./caret.js";
 import {
@@ -150,11 +150,27 @@ export default {
         (b) => b.offsetParent !== null && b.getAttribute("data-cl-settings-owner") !== HEADLESS,
       );
       opened = owner || visible?.getAttribute("data-cl-settings-owner") || HEADLESS;
+      if (opened === HEADLESS && !headlessMounted) {
+        // Overlays (Settings) and chrome-owning pages unmount the titlebar.
+        opened = null;
+        host.notify({
+          kind: "info",
+          message: "输入实验室：请先回到对话页或关闭当前设置页，再打开设置。",
+        });
+      }
       signal();
     }
+    let headlessMounted = 0;
     function UI({ headless = false }) {
       const id = useId(),
         owner = headless ? HEADLESS : id;
+      useEffect(() => {
+        if (!headless) return;
+        headlessMounted++;
+        return () => {
+          headlessMounted--;
+        };
+      }, [headless]);
       useSyncExternalStore(
         (fn) => {
           subscribers.add(fn);
@@ -499,12 +515,14 @@ export default {
       order: 80,
       render: () => jsx(UI, {}),
     });
-    // Permanent, invisible host for the dialog so the palette command works
-    // on pages without a composer (settings, before a session loads).
-    if (TITLEBAR_AREAS?.right)
+    // Invisible host for the dialog so the palette command also works on pages
+    // without a composer. `titleBar.center` (not left/right): the host treats
+    // any left/right contribution as "this page owns the titlebar" and would
+    // hide its own fixed controls on extension pages.
+    if (TITLEBAR_AREAS?.center)
       ctx.register({
         id: "dialog-host",
-        area: TITLEBAR_AREAS.right,
+        area: TITLEBAR_AREAS.center,
         order: 9999,
         render: () => jsx(UI, { headless: true }),
       });

@@ -139,3 +139,20 @@ test("out-of-range caret offsets are ignored", () => {
   assert.equal(markdownEdit("- a", 9, "Tab", false), null);
   assert.equal(markdownEdit("- a", -1, "Tab", false), null);
 });
+
+test("renumbering across a width change keeps children attached", () =>
+  assert.equal(
+    at("8. a\n   - b|\n9. c\n   - d", "Tab", true),
+    "8. a\n9. b|\n10. c\n    - d",
+  ));
+test("lifting an item with children continues their numbering", () =>
+  assert.equal(
+    at("1. a\n   1. b|\n      1. x\n   2. c", "Tab", true),
+    "1. a\n2. b|\n   1. x\n   2. c",
+  ));
+test("zero-padded numbers are replaced over their full width", () =>
+  assert.equal(at("01. a\n02. b|\n03. c", "Tab"), "01. a\n    1. b|\n02. c"));
+test("tab-indented lists are never rewritten", () => {
+  assert.deepEqual(markdownEdit("- a\n\t- b", 7, "Tab", true).changes, []);
+  assert.equal(markdownEdit("- a\n\t- b", 7, "Backspace", false), null);
+});

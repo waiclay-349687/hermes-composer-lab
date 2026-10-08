@@ -2,7 +2,7 @@
 
 ## 0.4.0: real-composer fixes
 
-Testing inside the real Hermes desktop app (isolated sandbox, mock model, CDP) showed that 0.3.x's line/marker wrapper spans broke caret placement, Backspace and arrow keys, and that whole-list re-serialization rewrote `-` to `*`, `1)` to `1.` and escaped task boxes. 0.4.0 never restructures the host DOM (markers use CSS highlights), edits only leading indentation/markers, pauses (not permanently disables) lists after an error, self-heals a lost `compositionend`, restores focus after the settings dialog, and opens settings from ⌘K on pages without a composer. `npm test` runs 23 checks; the Electron suites run 29.
+Testing inside the real Hermes desktop app (isolated sandbox, mock model, CDP) showed that 0.3.x's line/marker wrapper spans broke caret placement, Backspace and arrow keys, and that whole-list re-serialization rewrote `-` to `*`, `1)` to `1.` and escaped task boxes. 0.4.0 never restructures the host DOM (markers use CSS highlights), edits only leading indentation/markers, pauses (not permanently disables) lists after an error, self-heals a lost `compositionend`, restores focus after the settings dialog, and opens settings from ⌘K on pages without a composer. `npm test` runs 27 checks; the Electron suites run 29.
 
 ## Confirmed defect fixed in 0.3.0
 

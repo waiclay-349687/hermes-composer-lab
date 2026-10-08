@@ -13,4 +13,5 @@ export { Input } from "@host/components/ui/input";
 export { SegmentedControl } from "@host/components/ui/segmented-control";
 export const COMPOSER_AREAS = { actions: "test.actions" };
 export const PALETTE_AREA = "test.palette";
+export const TITLEBAR_AREAS = { center: "test.titlebar.center" };
 export const host = { notify: (n) => window.notifications.push(n) };
