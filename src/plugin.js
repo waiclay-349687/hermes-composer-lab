@@ -10,11 +10,12 @@ import {
   SegmentedControl,
   COMPOSER_AREAS,
   PALETTE_AREA,
+  TITLEBAR_AREAS,
   host,
 } from "@hermes/plugin-sdk";
 import { jsx, jsxs } from "react/jsx-runtime";
 import { useId, useRef, useState, useSyncExternalStore } from "react";
-import { mountLists, textOf } from "./editor.js";
+import { mountLists, textOf, SELECTOR } from "./editor.js";
 import { mountCaret } from "./caret.js";
 import {
   DEFAULT_SETTINGS,
@@ -25,7 +26,7 @@ import {
 export const CSS = `
 .cl-toolbar-button { width:var(--composer-control-size,24px);height:var(--composer-control-size,24px);padding:0;color:var(--ui-text-tertiary,var(--ui-text-secondary)); }
 [data-cl-cursor-style] { caret-color:var(--cl-caret-color,var(--ui-accent)); }
-@keyframes cl-native-fade { 0%,100% {caret-color:var(--cl-caret-color,var(--ui-accent));} 50% {caret-color:transparent;} }
+@keyframes cl-native-fade { 0%,40%,100% {caret-color:var(--cl-caret-color,var(--ui-accent));} 70% {caret-color:transparent;} }
 @supports (caret-animation:manual) {
  [data-cl-soft]:focus {caret-animation:manual;animation:cl-native-fade 1200ms ease-in-out infinite;}
 }
@@ -33,17 +34,13 @@ export const CSS = `
 .cl-caret-layer {position:fixed;inset:0;pointer-events:none!important;z-index:2147483000;overflow:hidden;}
 .cl-caret-layer[hidden] {display:none!important;}
 .cl-caret {position:fixed;top:0;left:0;width:2px;border-radius:1px;pointer-events:none;will-change:transform;}
+::highlight(cl-list-mark) {color:var(--ui-accent);}
+::highlight(cl-list-task) {color:var(--ui-text-secondary);}
+[data-cl-managed] :where(span,font):not([data-ref-text],[data-ref-text] *) {color:inherit!important;-webkit-text-fill-color:currentColor!important;}
 @media (prefers-reduced-motion:reduce) {
  [data-cl-soft]:focus {animation:none;caret-animation:auto;}
  .cl-caret-layer {display:none!important;}
 }
-[data-cl-managed] :where(span,font):not([data-cl-marker],[data-ref-text],[data-ref-text] *) {color:inherit!important;-webkit-text-fill-color:currentColor!important;}
-[data-cl-line] {display:block;min-height:1lh;white-space:pre-wrap;}
-[data-cl-line]>br:last-child {display:none;}
-[data-cl-line][data-cl-list] {padding-inline-start:calc(var(--cl-indent) + var(--cl-marker-width));text-indent:calc(-1 * (var(--cl-indent) + var(--cl-marker-width)));}
-[data-cl-list] {margin-block:.1em;}
-[data-cl-marker] {-webkit-text-fill-color:transparent;display:inline-block;position:relative;width:calc(var(--cl-indent) + var(--cl-marker-width));text-indent:0;color:transparent;white-space:pre;}
-[data-cl-marker]::after {-webkit-text-fill-color:currentColor;content:attr(data-cl-label);position:absolute;right:.65em;top:0;color:var(--ui-text-secondary);pointer-events:none;}
 .cl-dialog {max-width:min(480px,calc(100vw - 32px))!important;max-height:calc(100dvh - 48px);}
 .cl-panel {display:grid;gap:16px;color:var(--ui-text-primary);font-size:.8125rem;}
 .cl-group {display:grid;gap:0;}
@@ -81,41 +78,83 @@ export default {
       for (const fn of subscribers) fn();
     };
     const style = document.createElement("style");
-    style.dataset.composerLab = "0.3.1";
+    style.dataset.composerLab = "0.4.0";
     style.textContent = CSS;
     document.head.append(style);
     const caret = mountCaret(() => settings);
+    // A runtime failure pauses lists for this app session only. It is never
+    // written to storage: one glitch must not silently switch the feature off
+    // for good. Toggling the switch (or a restart) resumes it.
+    let listsPaused = false;
     const lists = mountLists({
-      enabled: () => settings.lists,
+      enabled: () => settings.lists && !listsPaused,
       onError: (e) => {
-        settings = { ...settings, lists: false };
-        ctx.storage.set("settings", settings);
+        console.error("[composer-lab] list enhancement paused:", e);
+        if (listsPaused) return;
+        listsPaused = true;
+        lists?.refresh();
         signal();
         host.notify({
           kind: "error",
-          message: `输入实验室已停用列表增强：${e.message}`,
+          message: `输入实验室：列表增强遇到错误，本次已暂停（${e.message}）。在设置里重新打开开关即可恢复。`,
         });
       },
     });
     function change(patch) {
+      if ("lists" in patch) listsPaused = false;
       settings = normalizeSettings({ ...settings, ...patch });
       ctx.storage.set("settings", settings);
       caret.refresh();
       lists.refresh();
       signal();
     }
+    // Where the caret was before the dialog took focus, so closing it hands
+    // the caret back instead of leaving focus nowhere.
+    let returnTo = null;
+    function remember() {
+      const sel = getSelection(),
+        editor = document.activeElement?.closest?.(SELECTOR);
+      returnTo =
+        editor && !editor.hasAttribute("data-composer-lab-demo")
+          ? {
+              editor,
+              range:
+                sel?.rangeCount && editor.contains(sel.anchorNode)
+                  ? sel.getRangeAt(0).cloneRange()
+                  : null,
+            }
+          : null;
+    }
+    function restoreFocus() {
+      const back = returnTo;
+      returnTo = null;
+      if (back?.editor.isConnected && back.editor.offsetParent !== null) {
+        back.editor.focus({ preventScroll: true });
+        if (back.range && back.editor.contains(back.range.startContainer)) {
+          const sel = getSelection();
+          sel.removeAllRanges();
+          sel.addRange(back.range);
+        }
+        return;
+      }
+      try {
+        host.composer?.focus?.();
+      } catch {
+        /* no visible composer: nothing to return to */
+      }
+    }
+    const HEADLESS = "cl-headless";
     function open(e, owner) {
       e?.preventDefault?.();
-      opened =
-        owner ||
-        document
-          .querySelector("[data-cl-settings-owner]")
-          ?.getAttribute("data-cl-settings-owner") ||
-        null;
+      const visible = [...document.querySelectorAll("[data-cl-settings-owner]")].find(
+        (b) => b.offsetParent !== null && b.getAttribute("data-cl-settings-owner") !== HEADLESS,
+      );
+      opened = owner || visible?.getAttribute("data-cl-settings-owner") || HEADLESS;
       signal();
     }
-    function UI() {
-      const owner = useId();
+    function UI({ headless = false }) {
+      const id = useId(),
+        owner = headless ? HEADLESS : id;
       useSyncExternalStore(
         (fn) => {
           subscribers.add(fn);
@@ -150,7 +189,7 @@ export default {
                 id: `cl-${key}`,
                 type: "button",
                 "aria-describedby": `cl-${key}-detail`,
-                checked: settings[key],
+                checked: key === "lists" ? settings.lists && !listsPaused : settings[key],
                 onCheckedChange: (v) => change({ [key]: v }),
               }),
             ],
@@ -175,19 +214,29 @@ export default {
           signal();
         },
         children: [
-          jsx(Button, {
-            type: "button",
-            variant: "ghost",
-            size: "icon-xs",
-            className: "cl-toolbar-button rounded-md",
-            title: "输入实验室：光标与列表设置",
-            "aria-label": "打开输入实验室",
-            "data-cl-settings-owner": owner,
-            onClick: (e) => open(e, owner),
-            children: "Aa",
-          }),
+          headless
+            ? null
+            : jsx(Button, {
+                type: "button",
+                variant: "ghost",
+                size: "icon-xs",
+                className: "cl-toolbar-button rounded-md",
+                title: "输入实验室：光标与列表设置",
+                "aria-label": "打开输入实验室",
+                "data-cl-settings-owner": owner,
+                onPointerDown: remember,
+                onKeyDown: (e) => {
+                  if (e.key === "Enter" || e.key === " ") remember();
+                },
+                onClick: (e) => open(e, owner),
+                children: "Aa",
+              }),
           jsx(DialogContent, {
             className: "cl-dialog",
+            onCloseAutoFocus: (e) => {
+              e.preventDefault();
+              restoreFocus();
+            },
             onSubmit: (e) => {
               e.preventDefault();
               e.stopPropagation();
@@ -209,7 +258,7 @@ export default {
                   children: [
                     jsx(DialogTitle, { children: "输入实验室" }),
                     jsx(DialogDescription, {
-                      children: "光标与列表 · 0.3.1 实验版",
+                      children: "光标与列表 · 0.4.0 实验版",
                     }),
                   ],
                 }),
@@ -450,16 +499,28 @@ export default {
       order: 80,
       render: () => jsx(UI, {}),
     });
+    // Permanent, invisible host for the dialog so the palette command works
+    // on pages without a composer (settings, before a session loads).
+    if (TITLEBAR_AREAS?.right)
+      ctx.register({
+        id: "dialog-host",
+        area: TITLEBAR_AREAS.right,
+        order: 9999,
+        render: () => jsx(UI, { headless: true }),
+      });
     ctx.register({
       id: "settings",
       area: PALETTE_AREA,
       data: {
         id: "composer-lab-settings",
         label: "输入实验室：光标与列表设置",
-        run: open,
+        run: () => {
+          remember();
+          open();
+        },
       },
     });
-    console.info("[composer-lab] 0.3.1 registered");
+    console.info("[composer-lab] 0.4.0 registered");
     ctx.onDispose(() => {
       lists.dispose();
       caret.dispose();

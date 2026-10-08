@@ -36,6 +36,9 @@ function Editor() {
       resetUndoHistory();
       sync();
     },
+    caretAt(offset) {
+      placeCaretAtOffset(editorRef.current, offset);
+    },
     undo,
     redo,
   };

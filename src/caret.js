@@ -1,5 +1,6 @@
 import { SELECTOR } from "./surface.js";
 import { isHexColor } from "./settings.js";
+import { caretRect } from "./editor.js";
 // Movement uses one temporary overlay. At rest CSS animates ONLY the native
 // caret-color: no idle clock, synthetic keystroke, focus(), or text color change.
 export function mountCaret(settings) {
@@ -40,17 +41,17 @@ export function mountCaret(settings) {
         styled.delete(el);
       }
   }
+  let scanFrame = 0;
   const discovery = new MutationObserver((records) => {
-    if (
-      records.some((r) =>
-        [...r.addedNodes, ...r.removedNodes].some(
-          (n) =>
-            n.nodeType === 1 &&
-            (n.matches?.(SELECTOR) || n.querySelector?.(SELECTOR)),
-        ),
-      )
-    )
-      scan();
+    if (scanFrame) return;
+    for (const r of records)
+      if (r.addedNodes.length || r.removedNodes.length) {
+        scanFrame = requestAnimationFrame(() => {
+          scanFrame = 0;
+          scan();
+        });
+        return;
+      }
   });
   discovery.observe(document.body, { childList: true, subtree: true });
   scan();
@@ -71,6 +72,12 @@ export function mountCaret(settings) {
     compositionEditor = null,
     disposed = false,
     generation = 0;
+  let lastNode = null,
+    lastAt = "";
+  function restartFade(el) {
+    for (const a of el.getAnimations())
+      if (a.animationName === "cl-native-fade") a.currentTime = 0;
+  }
   function stop() {
     generation++;
     animation?.cancel();
@@ -82,39 +89,22 @@ export function mountCaret(settings) {
     stop();
     previous = null;
   }
-  function rectAt(r, el) {
-    const q = r.getClientRects()[0];
-    if (q?.height) return q;
-    const n = r.startContainer,
-      o = r.startOffset;
-    if (n.nodeType === 3 && n.length) {
-      const probe = r.cloneRange();
-      probe.setStart(n, Math.max(0, o - 1));
-      probe.setEnd(n, Math.min(n.length, o || 1));
-      const box = probe.getBoundingClientRect();
-      if (box.height)
-        return {
-          left: o ? box.right : box.left,
-          top: box.top,
-          height: box.height,
-        };
-    }
-    const parent = n.nodeType === 1 ? n : n.parentElement,
-      line = parent.closest?.("[data-cl-line],p,li,pre") || el,
-      box = line.getBoundingClientRect(),
-      style = getComputedStyle(line);
-    return {
-      left: box.left + parseFloat(style.paddingLeft || 0),
-      top: box.top + parseFloat(style.paddingTop || 0),
-      height: parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.5,
-    };
-  }
   function measure() {
     const next = document.activeElement?.closest?.(SELECTOR),
       s = getSelection();
     if (next !== editor) {
       release();
       editor = next;
+    }
+    // Fade restarts fully opaque whenever the caret moves or text changes,
+    // like a native caret; it only fades while the caret rests.
+    if (editor?.isConnected && s?.rangeCount && editor.contains(s.focusNode)) {
+      const at = `${s.focusOffset}`;
+      if (s.focusNode !== lastNode || at !== lastAt) {
+        lastNode = s.focusNode;
+        lastAt = at;
+        restartFade(editor);
+      }
     }
     const ime = composing && editor === compositionEditor;
     if (
@@ -132,10 +122,12 @@ export function mountCaret(settings) {
     const r = document.createRange();
     r.setStart(s.focusNode, s.focusOffset);
     r.collapse(true);
-    const q = rectAt(r, editor),
+    // No trustworthy box (between elements, empty line): show the native
+    // caret instead of guessing a position.
+    const q = caretRect(r),
       bounds = editor.getBoundingClientRect();
     if (
-      !q.height ||
+      !q?.height ||
       q.top < bounds.top - 1 ||
       q.top > bounds.bottom ||
       q.left < bounds.left - 2 ||
@@ -216,11 +208,24 @@ export function mountCaret(settings) {
     compositionEditor = null;
     schedule();
   };
+  // compositionend can be lost (focus jump, input-source switch): recover on
+  // the next non-composing key or when focus leaves, like the host does.
+  const heal = (e) => {
+    if (composing && !e.isComposing && e.keyCode !== 229) end();
+  };
+  const leave = () => {
+    if (composing) end();
+    else schedule();
+  };
   const events = [
     ["selectionchange", schedule],
-    ["input", schedule],
+    ["input", () => {
+      lastAt = "";
+      schedule();
+    }],
     ["focusin", schedule],
-    ["focusout", schedule],
+    ["focusout", leave],
+    ["keydown", heal],
     ["scroll", schedule],
     ["visibilitychange", schedule],
     ["compositionstart", start],
@@ -239,6 +244,7 @@ export function mountCaret(settings) {
     dispose() {
       disposed = true;
       discovery.disconnect();
+      cancelAnimationFrame(scanFrame);
       for (const [el, saved] of styled) unstyle(el, saved);
       styled.clear();
       release();

@@ -96,11 +96,7 @@ fs.mkdirSync(scratch, { recursive: true });
       "nested ordered items restart at one and lifting restores outer numbering",
       async () => {
         await set("1. parent\n2. child\n3. next");
-        await page.evaluate(() => {
-          const l = document.querySelectorAll("#editor [data-cl-line]")[1],
-            n = [...l.childNodes].filter((n) => n.nodeType === 3).at(-1);
-          getSelection().collapse(n, n.length);
-        });
+        await page.evaluate(() => fixture.caretAt(17));
         await key("Tab");
         assert.equal(await read(), "1. parent\n   1. child\n2. next");
         await key("Shift+Tab");
@@ -111,9 +107,19 @@ fs.mkdirSync(scratch, { recursive: true });
       "Backspace at list text start lifts without whitespace remnants",
       async () => {
         await set("1. first\n   1. child");
-        await key("Meta+ArrowLeft");
+        await page.evaluate(() => fixture.caretAt(15));
         await key("Backspace");
         assert.equal(await read(), "1. first\n2. child");
+        // At the very line start Backspace stays native (joins lines).
+        await set("- a\n- b");
+        await page.evaluate(() => fixture.caretAt(4));
+        await key("Backspace");
+        assert.equal(await read(), "- a- b");
+        // Inside a task box / number it deletes one character only.
+        await set("- [x] todo");
+        await page.evaluate(() => fixture.caretAt(4));
+        await key("Backspace");
+        assert.equal(await read(), "- [] todo");
       },
     );
     await check("top-level Shift+Tab removes prefix cleanly", async () => {
@@ -141,9 +147,7 @@ fs.mkdirSync(scratch, { recursive: true });
         await page.waitForTimeout(90);
         let result = await page.evaluate(() => {
           const e = document.getElementById("editor"),
-            n = [...e.querySelector("[data-cl-line]").childNodes]
-              .filter((n) => n.nodeType === 3)
-              .at(-1);
+            n = [...e.childNodes].filter((n) => n.nodeType === 3).at(-1);
           const span = document.createElement("span");
           span.style.color = "rgb(0,255,0)";
           n.replaceWith(span);
@@ -160,7 +164,6 @@ fs.mkdirSync(scratch, { recursive: true });
         result = await page.evaluate(() => {
           const e = document.getElementById("editor");
           return [...e.querySelectorAll("span")]
-            .filter((n) => !n.hasAttribute("data-cl-marker"))
             .every(
               (n) => getComputedStyle(n).color === getComputedStyle(e).color,
             );
@@ -228,6 +231,55 @@ fs.mkdirSync(scratch, { recursive: true });
         await cdp.detach();
       },
     );
+    await check("host DOM is never restructured; markers are highlights", async () => {
+      await set("1. a\n   - b\n- [ ] c");
+      await page.waitForTimeout(120);
+      const r = await page.evaluate(() => ({
+        wrappers: document.querySelectorAll("#editor span:not([data-ref-text]),#editor div,#editor p").length,
+        marks: CSS.highlights.get("cl-list-mark")?.size || 0,
+        tasks: CSS.highlights.get("cl-list-task")?.size || 0,
+      }));
+      assert.deepEqual(r, { wrappers: 0, marks: 3, tasks: 1 });
+    });
+    await check("caret on a fresh empty line never animates from the editor corner", async () => {
+      await set("- item");
+      await page.waitForTimeout(250);
+      await key("Shift+Enter");
+      await key("Shift+Enter");
+      const samples = [];
+      for (let i = 0; i < 6; i++) {
+        samples.push(
+          await page.evaluate(() => {
+            const l = document.querySelector(".cl-caret-layer"),
+              e = document.getElementById("editor").getBoundingClientRect(),
+              m = /translate3d\(([-\d.]+)px, ([-\d.]+)px/.exec(l.firstChild.style.transform);
+            return l.hidden || !m ? null : [Number(m[1]) - e.left, Number(m[2]) - e.top];
+          }),
+        );
+        await page.waitForTimeout(25);
+      }
+      for (const s of samples.filter(Boolean))
+        assert.ok(!(s[0] < 20 && s[1] < 20), `overlay at editor corner ${s}`);
+      assert.match(await read(), /^- item\n+$/);
+    });
+    await check("lost compositionend self-heals on the next real key", async () => {
+      await set("- a");
+      await page.evaluate(() =>
+        document.getElementById("editor").dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true })),
+      );
+      await key("Shift+Enter");
+      assert.equal(await read(), "- a\n- ");
+    });
+    await check("Tab after a typed @path or /command is left to the host", async () => {
+      await set("- a\n- @fil");
+      const prevented = await page.evaluate(() => {
+        const e = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
+        document.getElementById("editor").dispatchEvent(e);
+        return e.defaultPrevented;
+      });
+      assert.equal(prevented, false);
+      assert.equal(await read(), "- a\n- @fil");
+    });
     await check(
       "disposal restores native source without changing text or focus",
       async () => {
@@ -246,6 +298,7 @@ fs.mkdirSync(scratch, { recursive: true });
             .count(),
           0,
         );
+        assert.equal(await page.evaluate(() => CSS.highlights.size), 0);
       },
     );
     assert.deepEqual(await page.evaluate(() => fixtureErrors), []);

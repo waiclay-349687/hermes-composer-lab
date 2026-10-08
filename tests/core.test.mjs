@@ -7,12 +7,23 @@ import {
   isHexColor,
 } from "../src/settings.js";
 import { markdownEdit } from "../src/markdown.js";
-const edit = (text, key, shift = false) => {
-  const e = markdownEdit(text, text.length, key, shift);
-  if (!e) return null;
+const apply = (text, e) => {
   for (const c of [...e.changes].reverse())
     text = text.slice(0, c.start) + c.insert + text.slice(c.end);
   return text;
+};
+const edit = (text, key, shift = false) => {
+  const e = markdownEdit(text, text.length, key, shift);
+  return e ? apply(text, e) : null;
+};
+// `|` marks the caret; returns the edited text with `|` at the new caret.
+const at = (marked, key, shift = false) => {
+  const offset = marked.indexOf("|"),
+    text = marked.replace("|", "");
+  const e = markdownEdit(text, offset, key, shift);
+  if (!e) return null;
+  const out = apply(text, e);
+  return out.slice(0, e.caret) + "|" + out.slice(e.caret);
 };
 test("legacy migration restores fade without inheriting trail/pulse controls", () =>
   assert.deepEqual(
@@ -69,4 +80,62 @@ test("all explicitly rendered SDK Buttons carry non-submit type", () => {
   const buttons = [...s.matchAll(/jsx\(Button,\s*\{([^}]+)/g)];
   assert.ok(buttons.length >= 3);
   for (const b of buttons) assert.match(b[1], /type:\s*['"]button['"]/);
+});
+
+test("Tab nests one level and keeps bullet characters and item text", () => {
+  assert.equal(at("- alpha\n- be|ta", "Tab"), "- alpha\n  - be|ta");
+  assert.equal(at("+ a\n+ b|", "Tab"), "+ a\n  + b|");
+  assert.equal(at("- a_b *c*\n- x\\_y|", "Tab"), "- a_b *c*\n  - x\\_y|");
+});
+test("Tab on the first item is consumed without changes", () => {
+  const e = markdownEdit("- a", 3, "Tab", false);
+  assert.deepEqual(e.changes, []);
+});
+test("Tab keeps task boxes intact (no escaping)", () =>
+  assert.equal(at("- [ ] task\n- [ ] t2|", "Tab"), "- [ ] task\n  - [ ] t2|"));
+test("ordered Tab restarts at 1, keeps delimiter, renumbers the rest", () => {
+  assert.equal(at("1) a\n2) b|\n3) c", "Tab"), "1) a\n   1) b|\n2) c");
+  assert.equal(at("1. a\n2. b|\n3. c", "Tab"), "1. a\n   1. b|\n2. c");
+});
+test("Tab joins an existing sublist with its numbering", () =>
+  assert.equal(
+    at("1. a\n   1. x\n2. b|", "Tab"),
+    "1. a\n   1. x\n   2. b|",
+  ));
+test("Shift+Tab lifts nested item after its parent and renumbers", () => {
+  assert.equal(at("1. a\n   1. b|\n2. c", "Tab", true), "1. a\n2. b|\n3. c");
+  assert.equal(at("- a\n  - b|\n  - c", "Tab", true), "- a\n- b|\n  - c");
+});
+test("Shift+Tab on top-level item removes only its prefix", () => {
+  assert.equal(at("- a\n- b|", "Tab", true), "- a\nb|");
+  assert.equal(at("1) a\n2) b|\n3) c", "Tab", true), "1) a\nb|\n2) c");
+});
+test("Backspace right after the marker removes it; no blank lines or marker rewrites", () => {
+  assert.equal(at("- a\n- |", "Backspace"), "- a\n|");
+  assert.equal(at("- a\n- |b", "Backspace"), "- a\n|b");
+  assert.equal(at("- a\n  - |b", "Backspace"), "- a\n- |b");
+});
+test("Backspace in item text or at line start is left to the host", () => {
+  assert.equal(at("- a\n- b|", "Backspace"), null);
+  assert.equal(at("- a\n|- b", "Backspace"), null);
+});
+test("nested children move with their item", () =>
+  assert.equal(
+    at("- a\n- b|\n  - c", "Tab"),
+    "- a\n  - b|\n    - c",
+  ));
+
+test("Backspace inside a marker, number or task box deletes one character natively", () => {
+  assert.equal(at("- [x|] todo", "Backspace"), null);
+  assert.equal(at("12|. item", "Backspace"), null);
+  assert.equal(at("1|. item", "Backspace"), null);
+  assert.equal(at("- [ ] |todo", "Backspace"), "|todo");
+});
+test("CRLF drafts keep host offsets and never throw", () => {
+  assert.doesNotThrow(() => markdownEdit("1. a\r\n2. b", 10, "Tab", false));
+  assert.doesNotThrow(() => markdownEdit("1. a\r\n2. b", 10, "Enter", true));
+});
+test("out-of-range caret offsets are ignored", () => {
+  assert.equal(markdownEdit("- a", 9, "Tab", false), null);
+  assert.equal(markdownEdit("- a", -1, "Tab", false), null);
 });
